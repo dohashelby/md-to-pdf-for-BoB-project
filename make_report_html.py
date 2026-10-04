@@ -31,12 +31,41 @@
   표(정렬 포함), 인용(> 안의 목록·표 포함), 코드 블록, ```mermaid 도식, 가로줄.
   참고문헌 목록의 "- [R01] …"·"- [T1] …" 항목에는 앵커를 달고, 본문의 [R01]·[R08~R11]·[T12]를 그 항목에 연결한다.
 
+도표 (레퍼런스: 맥킨지 리포트의 '도표 N' 형식)
+  표 바로 위 한 줄에 "도표: 제목"을 쓰면 '도표 N' 라벨과 굵은 제목이 붙는다.
+  표 바로 아래 문단이 "출처"·"자료"·"주"·"Note"·"참고"로 시작하면 작은 회색 주석으로 표시한다.
+  그래프는 ```chart 블록에 쓴다. 머리 줄(key: value) 다음에 CSV를 적는다.
+
+  ```chart
+  type: bar                      (bar: 세로 막대, hbar: 가로 막대)
+  title: 하반기 들어 vLLM 보안 권고가 크게 늘었음
+  subtitle: vLLM 보안 권고 수
+  unit: 건, GHSA ID 기준
+  source: GitHub Security Advisories(R67), 2026-10-04 집계
+  구분,권고 수
+  2026년 1~6월,23
+  2026-07-01~10-04,36
+  ```
+  둘째 열부터는 계열(series)이며, 계열이 둘 이상이면 오른쪽 위에 범례가 생긴다.
+
+다이어그램 (모두 title·subtitle·unit·source 머리 줄을 쓸 수 있다)
+  ```flow      가로 흐름. 한 줄에 "이름 | 설명", 이름 끝 *는 강조, 6개 이상이면 두 줄로 접는다.
+               aside: 이름 | 설명  → 해당 상자 아래에 보조 설명을 단다.
+  ```matrix    2×2. x: 왼쪽 → 오른쪽, y: 아래 → 위, top-left: 제목 | 내용 (나머지 칸도 같은 형식).
+               칸 이름 뒤 *는 강조 칸. 내용이 쉼표 목록이면 작은 칩으로 그린다.
+  ```steps     번호 카드. 한 줄에 "제목 | 설명", 줄 앞 *는 체크 표시(legend: 체크 설명).
+               columns: 3 으로 열 수를 정한다.
+
+상자
+  > **해석 범위**  처럼 첫 줄이 굵은 글씨뿐인 인용은 왼쪽 여백에 라벨을 둔 주석으로 그린다.
+
 표준 라이브러리만 사용한다(Python 3.9+). PDF 생성에는 Google Chrome이 필요하다.
 """
 
 import argparse
 import base64
 import html
+import math
 import os
 import re
 import shutil
@@ -89,14 +118,28 @@ class Context:
         self.toc_depth = toc_depth
         self.toc = []
         self.count = 0
+        self.exhibit = 0
+        self.pending_caption = ""
         self.mermaid = False
 
     def heading(self, level, raw):
         self.count += 1
         hid = f"s{self.count}"
-        text = inline(raw, self)
+        kicker, title = "", raw
+        if level == 2:
+            # "## 1. 제목" → 작은 'Chapter 1' 라벨 + 큰 제목, "## 부록 A. 제목" → '부록 A' 라벨 + 제목
+            m = re.match(r"^(\d+)\.\s+(.+)$", raw)
+            m2 = re.match(r"^(부록\s+\S+?)\.\s*(.+)$", raw)
+            if m:
+                kicker, title = f"Chapter {m.group(1)}", m.group(2)
+            elif m2:
+                kicker, title = m2.group(1), m2.group(2)
+        text = inline(title, self)
         if 2 <= level <= self.toc_depth:
-            self.toc.append((level, re.sub(r"<[^>]+>", "", text), hid))
+            self.toc.append((level, kicker, re.sub(r"<[^>]+>", "", text), hid))
+        if level == 2:
+            label = f'<span class="kicker">{html.escape(kicker)}</span>' if kicker else ""
+            return f'<h2 id="{hid}" class="chapter">{label}{text}</h2>'
         return f'<h{level} id="{hid}">{text}</h{level}>'
 
 
@@ -267,6 +310,342 @@ def parse_list(lines, i, ctx):
     return i, "".join(out)
 
 
+CAPTION_RE = re.compile(r"^(?:도표|Table)\s*[:：]\s*(.+)$")
+NOTE_RE = re.compile(r"^\**(출처|자료|주|Note|참고)(\s*[:：)]|는\s)")
+CHART_KEYS = ("type", "title", "subtitle", "unit", "source", "note")
+CHART_COLORS = ["#0B163F", "#6688CC", "#FFD45C", "#9AA6C4"]
+
+
+def exhibit(ctx, title, body, notes=(), sub=""):
+    """레퍼런스의 도표 형식: 작은 '도표 N' 라벨, 굵은 제목, 본체, 작은 회색 주석."""
+    head = ""
+    if title:
+        ctx.exhibit += 1
+        head = (f'<p class="ex-label">도표 {ctx.exhibit}</p>'
+                f'<p class="ex-title">{inline(title, ctx)}</p>')
+    foot = "".join(f'<p class="ex-note">{inline(n, ctx)}</p>' for n in notes if n)
+    return f'<figure class="exhibit">{head}{sub}{body}{foot}</figure>'
+
+
+def to_num(text):
+    try:
+        return max(0.0, float(re.sub(r"[^\d.\-]", "", text)))
+    except ValueError:
+        return 0.0
+
+
+def text_w(text, size):
+    """SVG 글자 폭 추정(한글 1em, 그 밖 0.6em)."""
+    return sum(size if ord(c) > 127 else size * 0.6 for c in text)
+
+
+def svg_text(x, y, text, size=15, anchor="middle", weight=400, fill="#1D2433"):
+    return (f'<text x="{x:.1f}" y="{y:.1f}" font-size="{size}" text-anchor="{anchor}" '
+            f'font-weight="{weight}" fill="{fill}">{html.escape(text)}</text>')
+
+
+def render_chart(code, ctx):
+    """```chart 블록을 레퍼런스 스타일의 막대그래프(SVG)로 그린다."""
+    spec, rows = {}, []
+    for line in code.splitlines():
+        if not line.strip():
+            continue
+        m = re.match(r"^\s*(" + "|".join(CHART_KEYS) + r")\s*:\s*(.*)$", line)
+        if m and not rows:
+            spec[m.group(1)] = m.group(2).strip()
+        else:
+            rows.append([c.strip() for c in line.split(",")])
+    if len(rows) < 2 or len(rows[0]) < 2:
+        return f'<pre><code>{html.escape(code)}</code></pre>'
+
+    series, cats = rows[0][1:], [r[0] for r in rows[1:]]
+    raw = [[(r[j + 1] if j + 1 < len(r) else "") for j in range(len(series))] for r in rows[1:]]
+    vals = [[to_num(v) for v in row] for row in raw]
+    top_v = max(max(row) for row in vals) or 1
+    m_ = len(series)
+    W, parts = 1000, []
+
+    legend_h = 0
+    if m_ > 1:
+        legend_h, x = 40, W
+        for j in reversed(range(m_)):
+            x -= text_w(series[j], 15)
+            parts.append(svg_text(x, 18, series[j], 15, "start"))
+            x -= 24
+            parts.append(f'<rect x="{x:.1f}" y="5" width="16" height="16" fill="{CHART_COLORS[j % 4]}"/>')
+            x -= 22
+
+    if spec.get("type", "bar") == "hbar":
+        label_w, bar_h, gap = 300, 26, 5
+        avail = W - label_w - 90
+        y = legend_h + 6
+        for i, cat in enumerate(cats):
+            block = m_ * bar_h + (m_ - 1) * gap
+            parts.append(svg_text(label_w - 16, y + block / 2 + 5, cat, 15, "end", 600, "#0B163F"))
+            for j in range(m_):
+                length = vals[i][j] / top_v * avail
+                by = y + j * (bar_h + gap)
+                parts.append(f'<rect x="{label_w}" y="{by:.1f}" width="{length:.1f}" height="{bar_h}" fill="{CHART_COLORS[j % 4]}"/>')
+                parts.append(svg_text(label_w + length + 8, by + bar_h / 2 + 5, raw[i][j], 15, "start", 600))
+            y += block + 22
+        parts.append(f'<line x1="{label_w}" y1="{legend_h}" x2="{label_w}" y2="{y - 16:.1f}" stroke="#0B163F" stroke-width="1.5"/>')
+        H = y
+    else:
+        top, plot_h = legend_h + 34, 240
+        group = W / len(cats)
+        bar_w = min(90, group * 0.62 / m_)
+        gap = 10 if m_ > 1 else 0
+        for i, cat in enumerate(cats):
+            x0 = group * (i + 0.5) - (m_ * bar_w + (m_ - 1) * gap) / 2
+            for j in range(m_):
+                h = vals[i][j] / top_v * plot_h
+                bx = x0 + j * (bar_w + gap)
+                parts.append(f'<rect x="{bx:.1f}" y="{top + plot_h - h:.1f}" width="{bar_w:.1f}" height="{h:.1f}" fill="{CHART_COLORS[j % 4]}"/>')
+                parts.append(svg_text(bx + bar_w / 2, top + plot_h - h - 9, raw[i][j], 16, "middle", 600))
+            parts.append(svg_text(group * (i + 0.5), top + plot_h + 30, cat, 15))
+        parts.append(f'<line x1="0" y1="{top + plot_h}" x2="{W}" y2="{top + plot_h}" stroke="#0B163F" stroke-width="1.5"/>')
+        H = top + plot_h + 46
+
+    svg = (f'<svg class="chart" viewBox="0 0 {W} {H:.0f}" role="img" '
+           f'aria-label="{html.escape(spec.get("subtitle") or spec.get("title") or "그래프")}">{"".join(parts)}</svg>')
+    sub = ""
+    if spec.get("subtitle") or spec.get("unit"):
+        sub = (f'<p class="ex-sub"><strong>{html.escape(spec.get("subtitle", ""))}</strong>'
+               f'{html.escape(spec.get("unit", ""))}</p>')
+    notes = [f'자료: {spec["source"]}' if spec.get("source") else "", spec.get("note", "")]
+    return exhibit(ctx, spec.get("title", ""), svg, notes, sub).replace('class="exhibit"', 'class="exhibit chart-fig"', 1)
+
+
+def parse_spec(code, keys):
+    """다이어그램 블록: 'key: value' 머리 줄과 나머지 항목 줄을 나눈다. key 뒤 *는 강조 표시."""
+    spec, items = {}, []
+    for line in code.splitlines():
+        if not line.strip():
+            continue
+        m = re.match(r"^\s*([a-z][\w-]*\*?)\s*:\s*(.*)$", line)
+        if m and m.group(1).rstrip("*") in keys:
+            spec[m.group(1)] = m.group(2).strip()
+        else:
+            items.append(line.strip())
+    return spec, items
+
+
+def sub_html(spec):
+    if not (spec.get("subtitle") or spec.get("unit")):
+        return ""
+    return (f'<p class="ex-sub"><strong>{html.escape(spec.get("subtitle", ""))}</strong>'
+            f'{html.escape(spec.get("unit", ""))}</p>')
+
+
+def figure(ctx, spec, svg_body, w, h, label):
+    svg = (f'<svg class="chart" viewBox="0 0 {w} {h:.0f}" role="img" aria-label="{html.escape(label)}">'
+           f'{svg_body}</svg>')
+    notes = [f'자료: {spec["source"]}' if spec.get("source") else "", spec.get("note", "")]
+    return exhibit(ctx, spec.get("title", ""), svg, notes, sub_html(spec)).replace(
+        'class="exhibit"', 'class="exhibit chart-fig"', 1)
+
+
+def wrap(text, max_w, size):
+    """SVG 글자 줄바꿈(단어 단위, 너무 긴 단어는 글자 단위)."""
+    lines, cur = [], ""
+    for word in text.split():
+        cand = f"{cur} {word}".strip()
+        if cur and text_w(cand, size) > max_w:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = cand
+    lines.append(cur)
+    out = []
+    for line in lines:
+        while text_w(line, size) > max_w and len(line) > 1:
+            k = len(line)
+            while k > 1 and text_w(line[:k], size) > max_w:
+                k -= 1
+            out.append(line[:k])
+            line = line[k:]
+        out.append(line)
+    return [x for x in out if x]
+
+
+def text_lines(x, y, lines, size, lh, anchor="start", weight=400, fill="#1D2433"):
+    return "".join(svg_text(x, y + i * lh, t, size, anchor, weight, fill) for i, t in enumerate(lines))
+
+
+def arrow(x1, y1, x2, y2, color="#0B163F", width=1.6, head=9, dash=""):
+    ang = math.atan2(y2 - y1, x2 - x1)
+    bx, by = x2 - head * math.cos(ang), y2 - head * math.sin(ang)
+    px, py = -math.sin(ang) * head * 0.55, math.cos(ang) * head * 0.55
+    d = f' stroke-dasharray="{dash}"' if dash else ""
+    return (f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{bx:.1f}" y2="{by:.1f}" stroke="{color}" stroke-width="{width}"{d}/>'
+            f'<polygon points="{x2:.1f},{y2:.1f} {bx + px:.1f},{by + py:.1f} {bx - px:.1f},{by - py:.1f}" fill="{color}"/>')
+
+
+NAVY, BLUE, YELLOW, MIST, GRAY, MUTED = "#0B163F", "#6688CC", "#FFD45C", "#F7F8FC", "#E5E7EB", "#5A6378"
+
+
+def render_flow(code, ctx):
+    """```flow: 상자와 화살표로 그린 가로 흐름. 6개 이상이면 두 줄로 접는다."""
+    spec, items = parse_spec(code, ("title", "subtitle", "unit", "source", "note", "aside"))
+    nodes = []
+    for item in items:
+        name, _, desc = (x.strip() for x in item.partition("|"))
+        nodes.append((name.rstrip("*").strip(), desc, name.endswith("*")))
+    if not nodes:
+        return f"<pre><code>{html.escape(code)}</code></pre>"
+    W, gap_x, row_gap = 1000, 44, 64
+    per = len(nodes) if len(nodes) <= 5 else math.ceil(len(nodes) / 2)
+    bw = (W - (per - 1) * gap_x) / per
+    pad = 18
+    wrapped = [(wrap(n, bw - 2 * pad, 18.5), wrap(d, bw - 2 * pad, 15.5)) for n, d, _ in nodes]
+    bh = max(2 * pad + len(a) * 24 + (8 + len(b) * 22 if b else 0) for a, b in wrapped) + 4
+    aside_name, _, aside_text = (x.strip() for x in spec.get("aside", "").partition("|"))
+    parts, pos = [], []
+    for i, ((name, desc, hl), (nl, dl)) in enumerate(zip(nodes, wrapped)):
+        r, c = divmod(i, per)
+        x, y = c * (bw + gap_x), r * (bh + row_gap)
+        pos.append((x, y))
+        parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{bh:.1f}" fill="{NAVY if hl else MIST}"/>')
+        parts.append(text_lines(x + pad, y + pad + 18, nl, 18.5, 24, weight=800, fill=MIST if hl else NAVY))
+        if dl:
+            parts.append(text_lines(x + pad, y + pad + 18 + len(nl) * 24 + 6, dl, 15.5, 22,
+                                    fill="#C9D2EA" if hl else MUTED))
+    for i in range(len(nodes) - 1):
+        (x1, y1), (x2, y2) = pos[i], pos[i + 1]
+        if y1 == y2:
+            parts.append(arrow(x1 + bw + 6, y1 + bh / 2, x2 - 6, y2 + bh / 2))
+        else:  # 줄을 바꿀 때는 아래로 꺾어 다음 줄 첫 상자로 잇는다
+            mid = y1 + bh + row_gap / 2
+            parts.append(f'<polyline points="{x1 + bw / 2:.1f},{y1 + bh + 4:.1f} {x1 + bw / 2:.1f},{mid:.1f} '
+                         f'{x2 + bw / 2:.1f},{mid:.1f}" fill="none" stroke="{NAVY}" stroke-width="1.6"/>')
+            parts.append(arrow(x2 + bw / 2, mid, x2 + bw / 2, y2 - 4))
+    H = pos[-1][1] + bh
+    names = [n for n, _, _ in nodes]
+    if aside_name in names:
+        x, y = pos[names.index(aside_name)]
+        cx = x + bw / 2
+        parts.append(arrow(cx, y + bh + 38, cx, y + bh + 6, BLUE, 1.4, 8, "4 3"))
+        lines = wrap(aside_text, max(bw * 1.6, 260), 15.5)
+        parts.append(text_lines(cx, y + bh + 60, lines, 15.5, 22, "middle", 600, NAVY))
+        H = max(H, y + bh + 60 + (len(lines) - 1) * 22 + 8)
+    return figure(ctx, spec, "".join(parts), W, H, spec.get("title") or "흐름도")
+
+
+def render_matrix(code, ctx):
+    """```matrix: 2×2 포지셔닝. 강조 칸(*)은 네이비로 채우고 노란 별을 붙인다."""
+    cells_keys = ("top-left", "top-right", "bottom-left", "bottom-right")
+    spec, _ = parse_spec(code, ("title", "subtitle", "unit", "source", "note", "x", "y") + cells_keys)
+    split = lambda v: [t.strip() for t in re.split(r"→|->", v)] + ["", ""]
+    xs, ys = split(spec.get("x", "")), split(spec.get("y", ""))
+    W, L, top, gap, pad = 1000, 170, 58, 12, 22
+    cw = (W - L - gap) / 2
+
+    def content(key):
+        hl = f"{key}*" in spec
+        text = spec.get(f"{key}*") or spec.get(key) or ""
+        head, _, body = (t.strip() for t in text.partition("|")) if "|" in text else ("", "", text.strip())
+        head_lines = wrap(("★ " if hl else "") + head, cw - 2 * pad, 19) if head else []
+        chips = [t.strip() for t in body.split(",")] if body.count(",") >= 1 and len(body) < 400 else []
+        body_lines = [] if chips else wrap(body, cw - 2 * pad, 16)
+        rows_, x, row = [], 0, []
+        for chip in chips:  # 칩 줄바꿈
+            w = text_w(chip, 15) + 26
+            if row and x + w > cw - 2 * pad:
+                rows_.append(row)
+                row, x = [], 0
+            row.append((chip, w))
+            x += w + 8
+        if row:
+            rows_.append(row)
+        h = 2 * pad + len(head_lines) * 26 + (10 if head_lines and (rows_ or body_lines) else 0)
+        h += len(rows_) * 40 + len(body_lines) * 25
+        return hl, head_lines, rows_, body_lines, h
+
+    data = {k: content(k) for k in cells_keys}
+    rh_top = max(150, data["top-left"][4], data["top-right"][4])
+    rh_bot = max(150, data["bottom-left"][4], data["bottom-right"][4])
+    parts = []
+    # 열 머리와 가로축 화살표
+    for i, label in enumerate(xs[:2]):
+        parts.append(svg_text(L + i * (cw + gap) + cw / 2, 24, label, 16, "middle", 800, NAVY))
+    parts.append(arrow(L, 40, W, 40, NAVY, 1.4, 9))
+    # 행 머리와 세로축 화살표
+    rows_y = [(top, rh_top, ys[1]), (top + rh_top + gap, rh_bot, ys[0])]
+    for y, h, label in rows_y:
+        lines = wrap(label, L - 44, 16)
+        parts.append(text_lines(28, y + h / 2 - (len(lines) - 1) * 11 + 5, lines, 16, 22, weight=800, fill=NAVY))
+    parts.append(arrow(10, top + rh_top + gap + rh_bot, 10, top, NAVY, 1.4, 9))
+    for idx, key in enumerate(cells_keys):
+        r, c = divmod(idx, 2)
+        x, (y, h, _) = L + c * (cw + gap), rows_y[r]
+        hl, head_lines, chip_rows, body_lines, _ = data[key]
+        parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" fill="{NAVY if hl else MIST}"/>')
+        cy = y + pad + 18
+        for t in head_lines:
+            if hl and t.startswith("★ "):
+                parts.append(f'<text x="{x + pad:.1f}" y="{cy:.1f}" font-size="18" font-weight="800" fill="{MIST}">'
+                             f'<tspan fill="{YELLOW}">★</tspan> {html.escape(t[2:])}</text>')
+            else:
+                parts.append(svg_text(x + pad, cy, t, 18, "start", 800, MIST if hl else NAVY))
+            cy += 26
+        if head_lines:
+            cy += 10
+        for row in chip_rows:
+            cx = x + pad
+            for chip, w in row:
+                parts.append(f'<rect x="{cx:.1f}" y="{cy - 21:.1f}" width="{w:.1f}" height="31" rx="15.5" '
+                             f'fill="{"#1B2A5C" if hl else "#FFFFFF"}" stroke="{"#33467A" if hl else GRAY}"/>')
+                parts.append(svg_text(cx + w / 2, cy, chip, 15, "middle", 600, MIST if hl else NAVY))
+                cx += w + 8
+            cy += 40
+        parts.append(text_lines(x + pad, cy, body_lines, 16, 25, fill="#C9D2EA" if hl else "#1D2433"))
+    H = top + rh_top + gap + rh_bot + 4
+    return figure(ctx, spec, "".join(parts), W, H, spec.get("title") or "2×2 매트릭스")
+
+
+def render_steps(code, ctx):
+    """```steps: 큰 번호를 단 카드. 줄 앞 *는 체크 표시."""
+    spec, items = parse_spec(code, ("title", "subtitle", "unit", "source", "note", "legend", "columns"))
+    cols = max(1, int(spec.get("columns", "3")))
+    W, gap, pad = 1000, 16, 22
+    cw = (W - (cols - 1) * gap) / cols
+    cards = []
+    for item in items:
+        checked = item.startswith("*")
+        head, _, desc = (t.strip() for t in item.lstrip("*").partition("|"))
+        cards.append((checked, wrap(head, cw - 2 * pad - 30, 19), wrap(desc, cw - 2 * pad, 15.5)))
+    if not cards:
+        return f"<pre><code>{html.escape(code)}</code></pre>"
+    legend_h = 36 if any(c[0] for c in cards) else 0
+    parts = []
+    if legend_h:
+        label = spec.get("legend", "우리 프레임워크가 지원하는 단계")
+        lx = W - text_w(label, 15)
+        parts.append(svg_text(lx, 18, label, 15, "start", 400, MUTED))
+        parts.append(f'<circle cx="{lx - 16:.1f}" cy="13" r="10" fill="{NAVY}"/>'
+                     f'<path d="M{lx - 21:.1f},13 l3.5,3.5 l6.5,-7" fill="none" stroke="{MIST}" stroke-width="2"/>')
+    y = legend_h
+    for start in range(0, len(cards), cols):
+        row = cards[start:start + cols]
+        h = max(2 * pad + 46 + len(t) * 25 + 8 + len(d) * 22 for _, t, d in row)
+        for j, (checked, t, d) in enumerate(row):
+            x = j * (cw + gap)
+            parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" fill="{MIST}"/>')
+            parts.append(svg_text(x + pad, y + pad + 32, str(start + j + 1), 36, "start", 800, BLUE))
+            if checked:
+                cx, cy = x + cw - 26, y + 26
+                parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="12" fill="{NAVY}"/>'
+                             f'<path d="M{cx - 6:.1f},{cy:.1f} l4,4 l8,-8.5" fill="none" stroke="{MIST}" stroke-width="2.2"/>')
+            parts.append(text_lines(x + pad, y + pad + 46 + 19, t, 19, 25, weight=800, fill=NAVY))
+            parts.append(text_lines(x + pad, y + pad + 46 + 19 + len(t) * 25 + 6, d, 15.5, 22, fill=MUTED))
+        y += h + gap
+    return figure(ctx, spec, "".join(parts), W, y - gap, spec.get("title") or "단계")
+
+
+def is_table_start(lines, k):
+    return k + 1 < len(lines) and lines[k].lstrip().startswith("|") and bool(TABLE_SEP_RE.match(lines[k + 1]))
+
+
 def parse_blocks(lines, ctx):
     out, i, n = [], 0, len(lines)
     while i < n:
@@ -284,7 +663,11 @@ def parse_blocks(lines, ctx):
                 i += 1
             i += 1
             code = "\n".join(buf)
-            if lang == "mermaid":
+            if lang == "chart":
+                out.append(render_chart(code, ctx))
+            elif lang in ("flow", "matrix", "steps"):
+                out.append({"flow": render_flow, "matrix": render_matrix, "steps": render_steps}[lang](code, ctx))
+            elif lang == "mermaid":
                 ctx.mermaid = True
                 out.append(f'<div class="mermaid">{html.escape(code)}</div>')
             else:
@@ -308,7 +691,18 @@ def parse_blocks(lines, ctx):
             while i < n and lines[i].lstrip().startswith("|"):
                 rows.append(lines[i])
                 i += 1
-            out.append(render_table(rows, sep, ctx))
+            notes = []
+            k = i
+            while k < n and not lines[k].strip():
+                k += 1
+            if k < n and NOTE_RE.match(lines[k].strip()) and not starts_block(lines[k]):
+                buf = []
+                while k < n and lines[k].strip() and not starts_block(lines[k]):
+                    buf.append(lines[k].strip())
+                    k += 1
+                notes, i = [" ".join(buf)], k
+            caption, ctx.pending_caption = ctx.pending_caption, ""
+            out.append(exhibit(ctx, caption, render_table(rows, sep, ctx), notes))
             continue
 
         if line.lstrip().startswith(">"):
@@ -317,7 +711,16 @@ def parse_blocks(lines, ctx):
                 s = lines[i].lstrip()[1:]
                 buf.append(s[1:] if s.startswith(" ") else s)
                 i += 1
-            out.append(f"<blockquote>{parse_blocks(buf, ctx)}</blockquote>")
+            # 첫 줄이 굵은 글씨뿐이면(> **해석 범위**) 왼쪽 여백에 라벨을 둔 주석으로 그린다
+            label = ""
+            first = next((k for k, l in enumerate(buf) if l.strip()), None)
+            if first is not None:
+                lm = re.match(r"^\*\*(.+?)\*\*\s*$", buf[first].strip())
+                if lm:
+                    label = lm.group(1)
+                    buf = buf[:first] + buf[first + 1:]
+            label_html = f'<div class="note-label">{inline(label, ctx)}</div>' if label else '<div class="note-label"></div>'
+            out.append(f'<aside class="note">{label_html}<div class="note-body">{parse_blocks(buf, ctx)}</div></aside>')
             continue
 
         if LIST_RE.match(line):
@@ -330,6 +733,13 @@ def parse_blocks(lines, ctx):
         while i < n and lines[i].strip() and not starts_block(lines[i]):
             buf.append(lines[i].strip())
             i += 1
+        k = i
+        while k < n and not lines[k].strip():
+            k += 1
+        cap = CAPTION_RE.match(" ".join(buf))
+        if cap and len(buf) == 1 and is_table_start(lines, k):
+            ctx.pending_caption = cap.group(1)
+            continue
         out.append("<p>" + inline(" ".join(buf), ctx) + "</p>")
     return "\n".join(out)
 
@@ -385,7 +795,7 @@ def compress_image(data, ext):
 CSS = r"""
 :root{
   --navy:#0B163F; --blue:#6688CC; --yellow:#FFD45C; --mist:#F7F8FC; --gray:#E5E7EB;
-  --text:#1D2433; --muted:#5A6378;
+  --text:#1D2433; --muted:#5A6378; --indent:30mm;
   /* 표지.png 기준 위치(폭 대비 %): 크림·네이비 경계, BBLS 로고의 왼쪽 끝과 폭 */
   --split:36.209%; --logo-left:3.79%; --logo-width:28.53%;
   --font:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
@@ -394,7 +804,7 @@ CSS = r"""
 html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 body{margin:0;background:var(--gray);color:var(--text);
   font-family:var(--font);
-  font-size:10.5pt;line-height:1.72;word-break:keep-all;overflow-wrap:break-word}
+  font-size:9.6pt;line-height:1.8;word-break:keep-all;overflow-wrap:break-word}
 
 /* ---------- cover ---------- */
 .cover{position:relative;width:min(210mm,100%);aspect-ratio:210/297;margin:24px auto;
@@ -415,61 +825,97 @@ body{margin:0;background:var(--gray);color:var(--text);
 .cover-meta{margin:0;font-size:2.15cqw;line-height:1.4;font-weight:700;color:var(--navy)}
 .logo-fit{white-space:nowrap}
 
-/* ---------- body sheet ---------- */
-.sheet{width:min(210mm,100%);margin:24px auto 48px;background:#fff;padding:20mm 18mm;
-  box-shadow:0 2px 16px rgba(11,22,63,.10)}
-.toc{margin-bottom:12mm}
-.toc h2{margin-top:0}
-.toc ol{list-style:none;padding:0;margin:0}
-.toc li a{display:block;color:var(--text);text-decoration:none;padding:3px 0;border-bottom:1px solid var(--gray)}
-.toc li.l2 a{font-weight:700;color:var(--navy);padding-top:6px}
-.toc li.l3 a{padding-left:18px;color:var(--muted);font-size:.94em}
-.toc li a:hover{color:var(--blue)}
+/* ---------- body sheet (레퍼런스: 들여 쓴 좁은 본문 단, 쪽 폭을 쓰는 도표) ---------- */
+.sheet{width:min(210mm,100%);margin:24px auto 48px;background:#fff;padding:22mm 18mm 24mm;
+  box-shadow:0 2px 16px rgba(11,22,63,.10);font-size:9.6pt;line-height:1.8}
+.doc > *, .toc{margin-left:var(--indent)}
+.doc > .exhibit, .doc > pre, .doc > .mermaid{margin-left:0}
+@media screen and (max-width:760px){.doc > *, .toc{margin-left:0}}
 
-h1,h2,h3,h4{color:var(--navy);line-height:1.35;font-weight:700}
-h1{font-size:20pt;margin:0 0 6mm}
-h2{font-size:16pt;margin:12mm 0 5mm;padding-bottom:2.5mm;border-bottom:2px solid var(--navy);position:relative}
-h2::after{content:"";position:absolute;left:0;bottom:-2px;width:22mm;height:2px;background:var(--yellow)}
-h3{font-size:12.5pt;margin:8mm 0 3mm;padding-left:3mm;border-left:4px solid var(--blue)}
-h4{font-size:11pt;margin:6mm 0 2mm}
-p{margin:0 0 3mm}
+.toc-title{font-size:30pt;font-weight:800;color:var(--navy);margin:0 0 16mm;letter-spacing:-.02em;line-height:1.2}
+.toc ol{list-style:none;padding:0;margin:0}
+.toc li{margin:0 0 6mm}
+.toc li a{display:block;color:var(--navy);text-decoration:none}
+.toc .t-kicker{display:block;font-size:9pt;font-weight:700;color:var(--text);margin-bottom:.6mm}
+.toc .t-title{display:block;font-size:13pt;font-weight:800;line-height:1.35;letter-spacing:-.01em}
+.toc li.l3{margin:-3.5mm 0 4.5mm}
+.toc li.l3 .t-title{font-size:9.5pt;font-weight:500;color:var(--muted)}
+.toc li a:hover .t-title{color:var(--blue)}
+
+h1,h2,h3,h4{color:var(--navy);font-weight:800;letter-spacing:-.015em}
+h1{font-size:22pt;line-height:1.3;margin:0 0 8mm}
+h2.chapter{font-size:24pt;line-height:1.3;margin-top:14mm;margin-bottom:12mm}
+h2.chapter .kicker{display:block;font-size:11pt;font-weight:700;color:var(--navy);letter-spacing:0;margin-bottom:3mm}
+h2.chapter .kicker::before{content:"";display:inline-block;width:7mm;height:2.5px;background:var(--yellow);
+  vertical-align:middle;margin:-2px 2.5mm 0 0}
+h3{font-size:13pt;line-height:1.4;margin:10mm 0 3.5mm}
+h4{font-size:10.5pt;line-height:1.4;margin:7mm 0 2mm}
+p{margin:0 0 3.4mm}
 a{color:var(--navy);text-decoration-color:var(--blue);text-underline-offset:2px}
-a.cite{text-decoration:none;color:var(--blue);font-weight:700}
-strong{color:var(--navy)}
-hr{border:none;border-top:1px solid var(--gray);margin:8mm 0}
-ul,ol{margin:0 0 3mm;padding-left:6mm}
-li{margin:.6mm 0}
-li::marker{color:var(--blue)}
+a.cite{text-decoration:none;color:var(--blue);font-weight:700;font-size:.92em}
+strong{color:var(--navy);font-weight:700}
+hr{border:none;border-top:1px solid var(--gray);margin:9mm 0}
+ul,ol{margin:0 0 3.4mm;padding-left:5.5mm}
+li{margin:.8mm 0}
+li::marker{color:var(--navy)}
 li.ref{scroll-margin-top:12px}
 li.ref:target{background:rgba(255,212,92,.35)}
-code{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:.88em;background:var(--mist);
-  border:1px solid var(--gray);padding:.05em .35em;border-radius:3px}
-pre{background:var(--mist);border:1px solid var(--gray);border-radius:6px;padding:4mm;
-  overflow-x:auto;font-size:8.6pt;line-height:1.5;white-space:pre-wrap}
+code{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:.86em;background:var(--mist);
+  border:1px solid var(--gray);padding:.05em .35em;border-radius:2px}
+pre{background:var(--mist);border:none;border-radius:0;padding:5mm 6mm;margin:6mm 0 7mm;
+  overflow-x:auto;font-size:8.4pt;line-height:1.55;white-space:pre-wrap}
 pre code{background:none;border:none;padding:0;font-size:inherit}
-blockquote{margin:4mm 0;padding:3mm 5mm;background:var(--mist);border-left:4px solid var(--blue);border-radius:0 6px 6px 0}
+blockquote{margin:6mm 0;padding:4.5mm 6mm;background:var(--mist);border-left:3px solid var(--blue)}
 blockquote p:last-child,blockquote ul:last-child{margin-bottom:0}
-.table-wrap{overflow-x:auto;margin:3mm 0 5mm}
-table{width:100%;border-collapse:collapse;font-size:9pt;line-height:1.55}
-th{background:var(--navy);color:var(--mist);font-weight:700;text-align:left;padding:2.2mm 2.6mm;vertical-align:bottom;
-  border-bottom:2px solid var(--yellow)}
-td{padding:2mm 2.6mm;border-bottom:1px solid var(--gray);vertical-align:top}
-tbody tr:nth-child(even) td{background:var(--mist)}
-.mermaid{margin:4mm 0;text-align:center;background:#fff;border:1px solid var(--gray);border-radius:6px;padding:4mm;
-  white-space:pre-wrap;font-size:8.6pt}
+
+/* 여백 주석(> **라벨**): 라벨은 왼쪽 들여쓰기 공간에, 내용은 위아래 가는 선 사이에 */
+.doc > aside.note{display:grid;grid-template-columns:var(--indent) 1fr;margin:7mm 0 8mm}
+.note-label{padding:2.4mm 4mm 0 0;font-size:8.6pt;font-weight:800;line-height:1.45;color:var(--navy)}
+.note-label:not(:empty)::before{content:"";display:block;width:6mm;height:2.5px;background:var(--yellow);margin-bottom:2mm}
+.note-body{border-top:1.5px solid var(--navy);border-bottom:1px solid var(--gray);padding:2.6mm 0 2.4mm;
+  font-size:8.8pt;line-height:1.75;color:#3A4256}
+.note-body p,.note-body ul,.note-body ol{margin-bottom:1.6mm}
+.note-body > :last-child{margin-bottom:0}
+.note-body ul{list-style:none;padding-left:0}
+.note-body ul > li{position:relative;padding-left:4.5mm;margin:.6mm 0}
+.note-body ul > li::before{content:"–";position:absolute;left:0;color:var(--navy);font-weight:700}
+@media screen and (max-width:760px){.doc > aside.note{grid-template-columns:1fr}.note-label{padding:0 0 1.5mm}}
+
+/* 도표: 작은 라벨 → 굵은 제목 → 본체 → 작은 회색 주석 */
+.exhibit{margin:9mm 0 10mm;padding:0}
+.ex-label{margin:0 0 1.2mm;font-size:8.5pt;color:var(--muted)}
+.ex-title{margin:0 0 6mm;font-size:13pt;font-weight:800;line-height:1.42;color:var(--navy);letter-spacing:-.015em}
+.ex-sub{margin:0 0 4mm;font-size:9pt;line-height:1.45;color:var(--text)}
+.ex-sub strong{display:block;font-weight:800}
+.ex-note{margin:2.6mm 0 0;font-size:7.8pt;line-height:1.6;color:var(--muted)}
+.ex-note + .ex-note{margin-top:.6mm}
+.chart{display:block;width:100%;height:auto;font-family:var(--font);overflow:visible}
+
+/* 표: 칠하지 않은 얇은 가로줄, 굵은 머리글 + 진한 선, 굵은 첫 열 */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:8.8pt;line-height:1.58}
+th{text-align:left;font-weight:800;color:var(--navy);padding:0 3.5mm 2.4mm 0;
+  border-bottom:1.5px solid var(--navy);vertical-align:bottom;background:none}
+td{padding:2.8mm 3.5mm 2.8mm 0;border-bottom:1px solid var(--gray);vertical-align:top}
+td:first-child{font-weight:700;color:var(--navy)}
+td strong{font-weight:800}
+.mermaid{margin:6mm 0 7mm;text-align:center;background:var(--mist);padding:5mm;white-space:pre-wrap;font-size:8.4pt}
 
 /* ---------- print ---------- */
-@page{size:A4;margin:18mm 17mm 20mm;
-  @bottom-center{content:counter(page);font-family:var(--font);font-size:8.5pt;color:#7A8194}}
-@page cover{margin:0;@bottom-center{content:none}}
+@page{size:A4;margin:20mm 18mm 22mm;
+  @bottom-left{content:"__RUNNING_TITLE__";font-family:'Pretendard Variable',Pretendard,sans-serif;
+    font-size:7.5pt;font-weight:700;color:#0B163F}
+  @bottom-right{content:counter(page);font-family:'Pretendard Variable',Pretendard,sans-serif;
+    font-size:7.5pt;color:#0B163F}}
+@page cover{margin:0;@bottom-left{content:none}@bottom-right{content:none}}
 @media print{
   body{background:#fff}
   .cover{page:cover;width:210mm;height:297mm;margin:0;box-shadow:none;break-after:page}
   .sheet{width:auto;margin:0;padding:0;box-shadow:none}
   .toc{break-after:page}
-  body.chapter-break .doc h2{break-before:page;margin-top:0}
-  h2,h3,h4{break-after:avoid}
-  tr,blockquote,pre,.mermaid,li.ref{break-inside:avoid}
+  body.chapter-break .doc h2.chapter{break-before:page;margin-top:0}
+  h2,h3,h4,.ex-label,.ex-title,.ex-sub{break-after:avoid}
+  tr,blockquote,pre,.mermaid,li.ref,.chart-fig,aside.note{break-inside:avoid}
   thead{display:table-header-group}
   .table-wrap{overflow:visible}
   a{color:inherit;text-decoration:none}
@@ -572,8 +1018,13 @@ def build_html(md_text, meta_override, cover_src, font_css, toc_depth, chapter_b
 
     toc_html = ""
     if ctx.toc:
-        items = "".join(f'<li class="l{lvl}"><a href="#{hid}">{html.escape(text)}</a></li>' for lvl, text, hid in ctx.toc)
-        toc_html = f'<nav class="toc"><h2>목차</h2><ol>{items}</ol></nav>'
+        items = "".join(
+            f'<li class="l{lvl}"><a href="#{hid}">'
+            + (f'<span class="t-kicker">{html.escape(kicker)}</span>' if kicker else "")
+            + f'<span class="t-title">{html.escape(text)}</span></a></li>'
+            for lvl, kicker, text, hid in ctx.toc)
+        toc_html = f'<nav class="toc"><h2 class="toc-title">목차</h2><ol>{items}</ol></nav>'
+    running = title.replace("\\", "\\\\").replace('"', '\\"')
 
     return f"""<!doctype html>
 <html lang="ko">
@@ -584,7 +1035,7 @@ def build_html(md_text, meta_override, cover_src, font_css, toc_depth, chapter_b
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
 {font_css}
-{CSS}
+{CSS.replace("__RUNNING_TITLE__", running)}
 </style>
 </head>
 <body class="{'chapter-break' if chapter_break else ''}">
@@ -629,7 +1080,7 @@ def main():
                     help="표지 이미지(.png·.jpg) 또는 docx (기본: 스크립트 옆 표지.png)")
     ap.add_argument("--single-file", action="store_true", help="표지 이미지를 HTML에 넣어 한 파일로 만든다")
     ap.add_argument("--pdf", action="store_true", help="Chrome으로 PDF도 만든다")
-    ap.add_argument("--toc-depth", type=int, default=3, choices=[0, 2, 3], help="목차 깊이 (0: 목차 없음)")
+    ap.add_argument("--toc-depth", type=int, default=2, choices=[0, 2, 3], help="목차 깊이 (2: 장만, 3: 절까지, 0: 목차 없음)")
     ap.add_argument("--no-chapter-break", action="store_true", help="인쇄할 때 ## 제목마다 새 쪽으로 넘기지 않는다")
     for key in ("title", "subtitle", "team", "date", "version", "cover-label", "cover-title"):
         ap.add_argument(f"--{key}", help=f"표지 {key} (front matter보다 우선)")

@@ -1,0 +1,11 @@
+# 생성물: 스크립트가 만드는 HTML·PDF·자료 폴더
+출력/
+*_assets/
+*.html
+*.pdf
+*.md
+!README.md
+# 백업·시스템 파일
+*.bak
+.DS_Store
+__pycache__/
