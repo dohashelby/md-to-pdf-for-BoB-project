@@ -9,11 +9,12 @@
 
 표지
   기본으로 스크립트 옆의 표지.png를 A4 전면 배경으로 쓴다(--cover로 변경, .png·.jpg·.docx 가능).
-  .docx를 지정하면 그 안의 배경 이미지와 Noto Sans KR 폰트를 꺼내 쓴다.
-  이미지 표지일 때 글꼴은 설치된 Noto Sans KR 또는 Google Fonts를 쓴다.
+  .docx를 지정하면 그 안의 배경 이미지를 꺼내 쓴다.
+  글꼴은 Pretendard다. 설치돼 있으면 그것을, 없으면 jsDelivr CDN의 웹폰트를 쓴다.
+  표지 배경을 바꾸면 CSS의 --split(배경 경계)·--logo-left·--logo-width(BBLS 로고 위치)를 새 이미지에 맞춰 고친다.
   표지 문구는 Markdown 맨 앞의 front matter로 정한다. 없으면 첫 번째 '# 제목'을 제목으로 쓰고,
   제목 바로 아래 '·'가 들어간 한 줄 문단(예: "1차 발표용 · 번뜩번뜩 작은별 · 작성 기준일 …")은 본문에서 빼고,
-  그중 '작성 기준일 YYYY-MM-DD'만 표지 하단에 쓴다(front matter의 date가 있으면 그 값을 쓴다).
+  그중 '작성 기준일 YYYY-MM-DD'의 날짜만 표지 하단에 쓴다(front matter의 date가 있으면 그 값을 쓴다).
 
   ---
   title: LLM 서빙 엔진 업데이트 보안 검증 조사보고서
@@ -336,19 +337,17 @@ def parse_blocks(lines, ctx):
 # ---------------------------------------------------------------- cover assets
 
 def extract_cover(cover, asset_dir, single_file):
-    """표지 이미지(.png·.jpg) 또는 docx에서 배경 이미지와 폰트를 준비한다. (이미지 src, 폰트 CSS)를 돌려준다."""
+    """표지 이미지(.png·.jpg) 또는 docx에서 배경 이미지를 준비한다. (이미지 src, 추가 CSS)를 돌려준다."""
     if cover.suffix.lower() == ".docx":
         with zipfile.ZipFile(cover) as z:
             media = [n for n in z.namelist() if n.startswith("word/media/")]
-            fonts = [n for n in z.namelist() if n.startswith("word/fonts/") and n.lower().endswith((".ttf", ".otf"))]
             if not media:
                 sys.exit(f"표지 이미지가 없습니다: {cover}")
             image_name = max(media, key=lambda n: z.getinfo(n).file_size)
             image_bytes = z.read(image_name)
-            font_bytes = {Path(n).name: z.read(n) for n in fonts}
         image_ext = Path(image_name).suffix.lower()
     elif cover.suffix.lower() in (".png", ".jpg", ".jpeg"):
-        image_bytes, image_ext, font_bytes = cover.read_bytes(), cover.suffix.lower(), {}
+        image_bytes, image_ext = cover.read_bytes(), cover.suffix.lower()
         if image_ext == ".jpeg":
             image_ext = ".jpg"
     else:
@@ -357,20 +356,13 @@ def extract_cover(cover, asset_dir, single_file):
     image_bytes, ext = compress_image(image_bytes, image_ext)
     mime = "image/jpeg" if ext == ".jpg" else "image/png"
 
-    font_css = []
     if single_file:
         src = f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}"
     else:
         asset_dir.mkdir(parents=True, exist_ok=True)
         (asset_dir / f"cover{ext}").write_bytes(image_bytes)
         src = f"{asset_dir.name}/cover{ext}"
-        for name, data in font_bytes.items():
-            (asset_dir / name).write_bytes(data)
-            weight = 700 if "bold" in name.lower() else 400
-            font_css.append(
-                f"@font-face{{font-family:'Noto Sans KR';font-weight:{weight};"
-                f"src:url('{asset_dir.name}/{name}') format('truetype');}}")
-    return src, "\n".join(font_css)
+    return src, ""
 
 
 def compress_image(data, ext):
@@ -393,28 +385,35 @@ def compress_image(data, ext):
 CSS = r"""
 :root{
   --navy:#0B163F; --blue:#6688CC; --yellow:#FFD45C; --mist:#F7F8FC; --gray:#E5E7EB;
-  --text:#1D2433; --muted:#5A6378; --split:40.913%;
+  --text:#1D2433; --muted:#5A6378;
+  /* 표지.png 기준 위치(폭 대비 %): 크림·네이비 경계, BBLS 로고의 왼쪽 끝과 폭 */
+  --split:36.209%; --logo-left:3.79%; --logo-width:28.53%;
+  --font:'Pretendard Variable',Pretendard,-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;
 }
 *{box-sizing:border-box}
 html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 body{margin:0;background:var(--gray);color:var(--text);
-  font-family:'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+  font-family:var(--font);
   font-size:10.5pt;line-height:1.72;word-break:keep-all;overflow-wrap:break-word}
 
 /* ---------- cover ---------- */
 .cover{position:relative;width:min(210mm,100%);aspect-ratio:210/297;margin:24px auto;
   overflow:hidden;container-type:inline-size;background:#F3F0E9;box-shadow:0 2px 16px rgba(11,22,63,.18)}
 .cover-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.cover-team{position:absolute;top:17.3cqw;left:6.37%;margin:0;color:var(--navy);
+/* 팀 이름과 작성 기준일은 BBLS 로고 폭 안에서 가운데 정렬한다 */
+.logo-fit{text-align:center;width:var(--logo-width)}
+.cover-team{position:absolute;top:17.3cqw;left:var(--logo-left);margin:0;color:var(--navy);
   font-size:3.75cqw;font-weight:700;line-height:1;letter-spacing:-.01em}
 /* 제목은 같은 내용을 두 겹으로 그리고, 배경 경계(--split)에서 잘라 색을 반전한다 */
-.cover-title-wrap{position:absolute;left:0;right:0;bottom:20%;padding-left:6.37%}
+.cover-title-wrap{position:absolute;left:0;right:0;bottom:20%;padding-left:var(--logo-left)}
 .cover-title-wrap.on-light{color:var(--navy);clip-path:inset(0 calc(100% - var(--split)) 0 0)}
 .cover-title-wrap.on-dark{color:var(--mist);clip-path:inset(0 0 0 var(--split))}
 .cover-kicker{margin:0 0 2.2cqw;font-size:2.4cqw;font-weight:700;letter-spacing:.04em;color:var(--blue)}
 .cover-title{margin:0;color:inherit;font-weight:900;line-height:1.16;letter-spacing:-.025em}
-.cover-info{position:absolute;left:6.37%;bottom:5.5%;width:32%;color:var(--navy)}
-.cover-meta{margin:0;font-size:2.3cqw;line-height:1.4;font-weight:700;color:var(--navy)}
+.cover-info{position:absolute;left:var(--logo-left);bottom:5.5%;width:var(--logo-width);color:var(--navy)}
+.cover-info .logo-fit{width:100%}
+.cover-meta{margin:0;font-size:2.15cqw;line-height:1.4;font-weight:700;color:var(--navy)}
+.logo-fit{white-space:nowrap}
 
 /* ---------- body sheet ---------- */
 .sheet{width:min(210mm,100%);margin:24px auto 48px;background:#fff;padding:20mm 18mm;
@@ -461,7 +460,7 @@ tbody tr:nth-child(even) td{background:var(--mist)}
 
 /* ---------- print ---------- */
 @page{size:A4;margin:18mm 17mm 20mm;
-  @bottom-center{content:counter(page);font-family:'Noto Sans KR',sans-serif;font-size:8.5pt;color:#7A8194}}
+  @bottom-center{content:counter(page);font-family:var(--font);font-size:8.5pt;color:#7A8194}}
 @page cover{margin:0;@bottom-center{content:none}}
 @media print{
   body{background:#fff}
@@ -482,7 +481,7 @@ MERMAID_JS = """<script type="module">
 import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
 mermaid.initialize({startOnLoad:true,theme:'base',themeVariables:{
   primaryColor:'#F7F8FC',primaryBorderColor:'#6688CC',primaryTextColor:'#0B163F',
-  lineColor:'#0B163F',fontFamily:'Noto Sans KR, sans-serif'}});
+  lineColor:'#0B163F',fontFamily:'Pretendard Variable, Pretendard, sans-serif'}});
 </script>"""
 
 
@@ -562,13 +561,13 @@ def build_html(md_text, meta_override, cover_src, font_css, toc_depth, chapter_b
     cover = [
         '<section class="cover">',
         f'<img class="cover-bg" src="{cover_src}" alt="">',
-        f'<p class="cover-team">{esc(meta.get("team") or DEFAULT_TEAM)}</p>',
+        f'<p class="cover-team logo-fit">{esc(meta.get("team") or DEFAULT_TEAM)}</p>',
         f'<div class="cover-title-wrap on-light">{title_block}</div>',
         f'<div class="cover-title-wrap on-dark" aria-hidden="true">{title_block}</div>',
         '<div class="cover-info">',
     ]
     if base_date:
-        cover.append(f'<p class="cover-meta">작성 기준일 {esc(base_date)}</p>')
+        cover.append(f'<p class="cover-meta logo-fit">{esc(base_date)}</p>')
     cover.append("</div></section>")
 
     toc_html = ""
@@ -582,8 +581,7 @@ def build_html(md_text, meta_override, cover_src, font_css, toc_depth, chapter_b
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(title)}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <style>
 {font_css}
 {CSS}
