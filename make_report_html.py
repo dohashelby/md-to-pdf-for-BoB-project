@@ -2,10 +2,11 @@
 """Markdown 보고서를 번뜩번뜩 작은별 표지가 붙은 HTML(선택: PDF)로 만든다.
 
 사용법
-  python3 make_report_html.py 보고서.md                      → 보고서.html + 보고서_assets/
+  python3 make_report_html.py 보고서.md                      → 보고서.html 한 파일(표지 이미지 포함)
   python3 make_report_html.py 보고서.md -o out/report.html
-  python3 make_report_html.py 보고서.md --single-file        → 표지 이미지까지 HTML 한 파일에 포함
-  python3 make_report_html.py 보고서.md --pdf                → Chrome으로 PDF도 생성
+  python3 make_report_html.py 보고서.md --pdf                → 보고서.pdf 한 파일만 생성(Chrome 사용)
+  python3 make_report_html.py 보고서.md -o out/report.pdf    → 출력 경로가 .pdf여도 PDF만 생성
+  자료 폴더(_assets)는 만들지 않는다. PDF를 만들 때 쓰는 중간 HTML은 임시 폴더에서 만들고 지운다.
 
 표지
   기본으로 스크립트 옆의 표지.png를 A4 전면 배경으로 쓴다(--cover로 변경, .png·.jpg·.docx 가능).
@@ -447,12 +448,17 @@ def figure(ctx, spec, svg_body, w, h, label):
 
 def wrap(text, max_w, size):
     """SVG 글자 줄바꿈(단어 단위, 너무 긴 단어는 글자 단위)."""
-    lines, cur = [], ""
+    # 띄어쓰기 외에 가운뎃점(·)·쉼표 뒤에서도 줄을 바꿀 수 있게 토큰을 나눈다
+    tokens = []
     for word in text.split():
-        cand = f"{cur} {word}".strip()
+        parts = [x for x in re.split(r"(?<=[·,/])", word) if x]
+        tokens += [(part, j > 0) for j, part in enumerate(parts)]
+    lines, cur = [], ""
+    for tok, attach in tokens:
+        cand = (cur + tok) if attach else f"{cur} {tok}".strip()
         if cur and text_w(cand, size) > max_w:
             lines.append(cur)
-            cur = word
+            cur = tok
         else:
             cur = cand
     lines.append(cur)
@@ -746,8 +752,8 @@ def parse_blocks(lines, ctx):
 
 # ---------------------------------------------------------------- cover assets
 
-def extract_cover(cover, asset_dir, single_file):
-    """표지 이미지(.png·.jpg) 또는 docx에서 배경 이미지를 준비한다. (이미지 src, 추가 CSS)를 돌려준다."""
+def extract_cover(cover):
+    """표지 이미지(.png·.jpg) 또는 docx에서 배경 이미지를 꺼내 HTML에 바로 넣을 data URI로 만든다."""
     if cover.suffix.lower() == ".docx":
         with zipfile.ZipFile(cover) as z:
             media = [n for n in z.namelist() if n.startswith("word/media/")]
@@ -766,13 +772,7 @@ def extract_cover(cover, asset_dir, single_file):
     image_bytes, ext = compress_image(image_bytes, image_ext)
     mime = "image/jpeg" if ext == ".jpg" else "image/png"
 
-    if single_file:
-        src = f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}"
-    else:
-        asset_dir.mkdir(parents=True, exist_ok=True)
-        (asset_dir / f"cover{ext}").write_bytes(image_bytes)
-        src = f"{asset_dir.name}/cover{ext}"
-    return src, ""
+    return f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}", ""
 
 
 def compress_image(data, ext):
@@ -1061,25 +1061,28 @@ def find_chrome():
     return None
 
 
-def make_pdf(html_path, pdf_path):
+def make_pdf(page, pdf_path):
+    """HTML을 임시 폴더에 써서 Chrome으로 PDF를 만들고, 임시 파일은 지운다. 성공하면 True."""
     chrome = find_chrome()
     if not chrome:
-        print("Chrome을 찾지 못해 PDF를 만들지 않았습니다. HTML을 Chrome에서 열고 인쇄 → PDF로 저장하세요.")
-        return
-    subprocess.run([chrome, "--headless", "--disable-gpu", "--no-pdf-header-footer",
-                    "--virtual-time-budget=15000", f"--print-to-pdf={pdf_path}",
-                    html_path.resolve().as_uri()], check=True, capture_output=True)
-    print(f"PDF: {pdf_path}")
+        return False
+    with tempfile.TemporaryDirectory() as tmp:
+        html_path = Path(tmp) / "report.html"
+        html_path.write_text(page, encoding="utf-8")
+        subprocess.run([chrome, "--headless", "--disable-gpu", "--no-pdf-header-footer",
+                        "--virtual-time-budget=15000", f"--print-to-pdf={pdf_path.resolve()}",
+                        html_path.as_uri()], check=True, capture_output=True)
+    return True
 
 
 def main():
     ap = argparse.ArgumentParser(description="Markdown 보고서 → 표지가 붙은 HTML")
     ap.add_argument("markdown", type=Path)
-    ap.add_argument("-o", "--output", type=Path, help="출력 HTML 경로 (기본: 입력 파일명.html)")
+    ap.add_argument("-o", "--output", type=Path, help="출력 경로 (기본: 입력 파일명.html, --pdf면 .pdf)")
     ap.add_argument("--cover", "--cover-docx", dest="cover", type=Path, default=DEFAULT_COVER,
                     help="표지 이미지(.png·.jpg) 또는 docx (기본: 스크립트 옆 표지.png)")
-    ap.add_argument("--single-file", action="store_true", help="표지 이미지를 HTML에 넣어 한 파일로 만든다")
-    ap.add_argument("--pdf", action="store_true", help="Chrome으로 PDF도 만든다")
+    ap.add_argument("--single-file", action="store_true", help=argparse.SUPPRESS)  # 예전 옵션: 이제 항상 한 파일
+    ap.add_argument("--pdf", action="store_true", help="HTML 대신 PDF 한 파일만 만든다(Chrome 사용)")
     ap.add_argument("--toc-depth", type=int, default=2, choices=[0, 2, 3], help="목차 깊이 (2: 장만, 3: 절까지, 0: 목차 없음)")
     ap.add_argument("--no-chapter-break", action="store_true", help="인쇄할 때 ## 제목마다 새 쪽으로 넘기지 않는다")
     for key in ("title", "subtitle", "team", "date", "version", "cover-label", "cover-title"):
@@ -1091,19 +1094,26 @@ def main():
     if not args.cover.exists():
         sys.exit(f"표지 파일이 없습니다: {args.cover} (--cover로 지정)")
 
-    out = args.output or args.markdown.with_suffix(".html")
+    want_pdf = args.pdf or (args.output is not None and args.output.suffix.lower() == ".pdf")
+    out = args.output or args.markdown
+    out = out.with_suffix(".pdf" if want_pdf else ".html")
     out.parent.mkdir(parents=True, exist_ok=True)
-    asset_dir = out.parent / f"{out.stem}_assets"
-    cover_src, font_css = extract_cover(args.cover, asset_dir, args.single_file)
+    cover_src, font_css = extract_cover(args.cover)
 
     override = {"title": args.title, "subtitle": args.subtitle, "team": args.team,
                 "date": args.date, "version": args.version, "cover_label": args.cover_label, "cover_title": args.cover_title}
     page = build_html(args.markdown.read_text(encoding="utf-8"), override, cover_src, font_css,
                       args.toc_depth or 1, not args.no_chapter_break)
-    out.write_text(page, encoding="utf-8")
-    print(f"HTML: {out}" + ("" if args.single_file else f"  (자료: {asset_dir.name}/)"))
-    if args.pdf:
-        make_pdf(out, out.with_suffix(".pdf"))
+    if not want_pdf:
+        out.write_text(page, encoding="utf-8")
+        print(f"HTML: {out}")
+    elif make_pdf(page, out):
+        print(f"PDF: {out}")
+    else:
+        fallback = out.with_suffix(".html")
+        fallback.write_text(page, encoding="utf-8")
+        print(f"Chrome을 찾지 못해 PDF 대신 HTML을 만들었습니다: {fallback}\n"
+              "Chrome에서 열고 인쇄 → PDF로 저장하세요.")
 
 
 if __name__ == "__main__":
