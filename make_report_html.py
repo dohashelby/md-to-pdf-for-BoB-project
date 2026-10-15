@@ -590,7 +590,7 @@ def render_flow_deck(spec, nodes, ctx):
         r, c = divmod(i, per)
         x, y = c * (bw + gap_x), r * (bh + row_gap)
         pos.append((x, y))
-        parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{bh:.1f}" rx="12" '
+        parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{bh:.1f}" '
                      f'fill="{NAVY if hl else "#FFFFFF"}" stroke="{NAVY}" stroke-width="1.6"/>')
         parts.append(badge(x + pad + circ / 2, y + pad + head_h / 2, i + 1, circ / 2,
                            YELLOW if hl else NAVY, NAVY if hl else "#FFFFFF"))
@@ -714,7 +714,7 @@ def render_matrix(code, ctx):
         cx = L + i * (cw + gap) + cw / 2
         if deck and label:  # 열 머리는 네이비 알약 라벨
             pw = text_w(label, 15) + 36
-            parts.append(f'<rect x="{cx - pw / 2:.1f}" y="2" width="{pw:.1f}" height="30" rx="15" fill="{NAVY}"/>')
+            parts.append(f'<rect x="{cx - pw / 2:.1f}" y="2" width="{pw:.1f}" height="30" fill="{NAVY}"/>')
             parts.append(svg_text(cx, 22.5, label, 15, "middle", 800, "#FFFFFF"))
         else:
             parts.append(svg_text(cx, 24, label, 16, "middle", 800, NAVY))
@@ -730,7 +730,7 @@ def render_matrix(code, ctx):
         x, (y, h, _) = L + c * (cw + gap), rows_y[r]
         hl, head_lines, chip_rows, body_lines, _ = data[key]
         if deck:
-            parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" rx="12" '
+            parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" '
                          f'fill="{NAVY if hl else "#FFFFFF"}" stroke="{NAVY if hl else LINE}" stroke-width="1.6"/>')
         else:
             parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" fill="{NAVY if hl else MIST}"/>')
@@ -747,7 +747,7 @@ def render_matrix(code, ctx):
         for row in chip_rows:
             cx = x + pad
             for chip, w in row:
-                parts.append(f'<rect x="{cx:.1f}" y="{cy - 21:.1f}" width="{w:.1f}" height="31" rx="15.5" '
+                parts.append(f'<rect x="{cx:.1f}" y="{cy - 21:.1f}" width="{w:.1f}" height="31" '
                              f'fill="{"#1B2A5C" if hl else (SOFT if deck else "#FFFFFF")}" '
                              f'stroke="{"#33467A" if hl else (SOFT if deck else GRAY)}"/>')
                 parts.append(svg_text(cx + w / 2, cy, chip, 15, "middle", 600, MIST if hl else NAVY))
@@ -789,7 +789,7 @@ def render_steps(code, ctx):
         for j, (checked, t, d) in enumerate(row):
             x = j * (cw + gap)
             if deck:  # 둥근 카드 + 네이비 번호 원
-                parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" rx="12" '
+                parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" '
                              f'fill="#FFFFFF" stroke="{NAVY if checked else LINE}" stroke-width="1.6"/>')
                 parts.append(badge(x + pad + 17, y + pad + 17, start + j + 1, 17))
                 if checked:
@@ -1115,11 +1115,11 @@ td strong{font-weight:800}
 DECK_CSS = r"""
 :root{--accent:#4A6DBB;--line:#C9CEDD;--soft:#EEF1F8}
 /* 도표 패널: 둥근 네이비 테두리 + 위쪽 테두리에 걸친 탭 라벨 */
-.exhibit.deck{position:relative;background:#fff;border:1.6px solid var(--navy);border-radius:14px;
-  padding:0 6mm 5mm;margin:13mm 0 9mm}
-.exhibit.deck.untitled{border:none;background:none;padding:0;margin:7mm 0 8mm}
+.exhibit.deck{position:relative;background:#fff;border:none;
+  padding:0 0 3mm;margin:13mm 0 9mm}
+.exhibit.deck.untitled{margin:7mm 0 8mm}
 /* 탭은 흐름 안에 두고 위로 반만 올린다: 인쇄할 때 탭만 쪽 끝에 남지 않게 다음 내용과 붙인다 */
-.ex-tab{display:table;transform:translateY(-50%);margin:0 auto 1mm;max-width:96%;white-space:nowrap;break-after:avoid;
+.ex-tab{display:table;margin:0 auto 5mm;max-width:96%;white-space:nowrap;break-after:avoid;
   background:var(--navy);color:#fff;font-size:10.5pt;font-weight:800;line-height:1.4;letter-spacing:-.01em;
   text-align:center;padding:1.7mm 7mm;clip-path:polygon(4mm 0,calc(100% - 4mm) 0,100% 50%,calc(100% - 4mm) 100%,4mm 100%,0 50%)}
 .ex-tab a,.ex-tab strong{color:#fff}
@@ -1133,26 +1133,23 @@ DECK_CSS = r"""
 .exhibit.deck table{border-collapse:separate;border-spacing:0;font-size:8.6pt;line-height:1.55}
 .exhibit.deck th{background:var(--navy);color:#fff;text-align:center;vertical-align:middle;
   padding:2.2mm 3mm;border:none;font-weight:800}
-.exhibit.deck th:first-child{border-top-left-radius:7px}
-.exhibit.deck th:last-child{border-top-right-radius:7px}
 .exhibit.deck td{padding:2.3mm 3mm;border-bottom:1px solid #E3E6EE}
 .exhibit.deck td:first-child{background:var(--soft);color:var(--navy);font-weight:800;text-align:center;vertical-align:middle}
 .exhibit.deck tr:last-child td{border-bottom:none}
-.exhibit.deck tr:last-child td:first-child{border-bottom-left-radius:7px}
 /* 인용: 연한 상자 + 네이비 왼쪽 띠, 굵은 글씨는 노란 형광펜 */
-blockquote{background:var(--soft);border-left:4px solid var(--navy);border-radius:0 10px 10px 0}
+blockquote{background:var(--soft);border-left:4px solid var(--navy)}
 blockquote strong,.note-body strong{background:linear-gradient(transparent 55%,var(--yellow) 55%)}
 /* 여백 주석(> **라벨**): 둥근 테두리 상자 + 네이비 알약 라벨 */
-.doc > aside.note{display:block;position:relative;border:1.4px solid var(--navy);border-radius:12px;
-  padding:6mm 6mm 3.5mm;margin:10mm 0 8mm var(--indent)}
-.note-label{position:absolute;top:0;left:6mm;transform:translateY(-50%);padding:.8mm 4.5mm;
-  background:var(--navy);color:#fff;border-radius:99px;font-size:8.4pt}
+.doc > aside.note{display:block;position:relative;border:none;border-top:1.4px solid var(--navy);
+  padding:6mm 0 1mm;margin:10mm 0 8mm var(--indent)}
+.note-label{position:absolute;top:0;left:0;transform:translateY(-50%);padding:.8mm 4.5mm;
+  background:var(--navy);color:#fff;font-size:8.4pt}
 .note-label:empty{display:none}
 .note-label:not(:empty)::before{content:none}
 .note-body{border:none;padding:0}
 .note-body ul > li::before{content:"•";color:var(--accent)}
 @media screen and (max-width:760px){.doc > aside.note{margin-left:0}}
-.mermaid{background:#fff;border:1.6px solid var(--navy);border-radius:14px}
+.mermaid{background:#fff;border:none}
 @media print{.exhibit.deck:not(:has(table)){break-inside:avoid}.ex-tab{break-inside:avoid}}
 """
 
