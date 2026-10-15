@@ -28,7 +28,7 @@ python3 make_report_html.py 1.md -o 출력/보고서.pdf
 | `--toc-depth 2·3·0` | 목차 깊이. 2는 장만, 3은 절까지, 0은 목차 없음 | 2 |
 | `--no-chapter-break` | 인쇄할 때 `##` 장마다 새 쪽으로 넘기지 않는다 | 장마다 새 쪽 |
 | `--theme deck·classic` | 도표·표·주석 상자 테마. deck은 1차 발표자료(PPT) 테마(둥근 네이비 패널, 탭 라벨, 번호 원, 꺾쇠 화살표), classic은 예전 리포트 테마 | deck |
-| `--title`, `--team`, `--date`, `--cover-title`, `--cover-label` | 표지 문구. front matter보다 우선한다 | — |
+| `--title`, `--team`, `--date`, `--cover-title` | 표지 문구. front matter보다 우선한다 | — |
 
 출력 결과:
 
@@ -47,7 +47,6 @@ HTML을 Chrome에서 열고 직접 인쇄(⌘P → PDF로 저장)해도 같은 �
 | --- | --- | --- |
 | 로고 아래 팀 이름 | "번뜩번뜩작은별" | front matter `team` 또는 `--team` |
 | 큰 제목 | 보고서 제목. 배경 경계에서 글자색이 네이비 ↔ 밝은색으로 바뀐다 | `title` (줄바꿈은 `cover_title`) |
-| 큰 제목 위 작은 문구 | 기본은 없음 | `cover_label` |
 | 아래쪽 날짜 | 작성 기준일의 날짜만 | `date`, 없으면 본문 첫 줄의 "작성 기준일 YYYY-MM-DD" |
 
 ### 3.1 front matter (선택)
@@ -60,7 +59,6 @@ title: LLM 서빙 엔진 업데이트 보안 검증 조사보고서
 cover_title: LLM 서빙 엔진 | 업데이트 보안 검증 | 조사보고서
 team: 번뜩번뜩작은별
 date: 2026-10-03
-cover_label: 프로젝트 사전조사 보고서
 ---
 ```
 

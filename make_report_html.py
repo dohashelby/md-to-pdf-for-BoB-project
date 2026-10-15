@@ -24,7 +24,6 @@
   team: 번뜩번뜩 작은별
   date: 2026-10-04
   version: 검토용 초안 v0.3
-  cover_label: 프로젝트 사전조사 보고서   (선택: 큰 제목 위의 작은 문구)
   cover_title: LLM 서빙 엔진 | 업데이트 보안 검증 | 조사보고서   (선택: 큰 제목 줄바꿈 지정)
   ---
 
@@ -81,7 +80,6 @@ from urllib.parse import unquote
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_COVER = SCRIPT_DIR / "표지.png"
-DEFAULT_LABEL = ""  # 큰 제목 위 작은 문구. 기본은 쓰지 않는다(front matter의 cover_label로 지정 가능)
 DEFAULT_TEAM = "번뜩번뜩작은별"
 CHROME_PATHS = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -506,7 +504,7 @@ def sub_html(spec):
 
 
 def figure(ctx, spec, svg_body, w, h, label):
-    svg = (f'<svg class="chart" viewBox="0 0 {w} {h:.0f}" role="img" aria-label="{html.escape(label)}">'
+    svg = (f'<svg class="chart" viewBox="-2 -2 {w + 4} {h + 4:.0f}" role="img" aria-label="{html.escape(label)}">'
            f'{svg_body}</svg>')
     notes = [f'자료: {spec["source"]}' if spec.get("source") else "", spec.get("note", "")]
     return exhibit(ctx, spec.get("title", ""), svg, notes, sub_html(spec)).replace(
@@ -1003,7 +1001,6 @@ body{margin:0;background:var(--gray);color:var(--text);
 .cover-title-wrap{position:absolute;left:0;right:0;bottom:20%;padding-left:var(--logo-left)}
 .cover-title-wrap.on-light{color:var(--navy);clip-path:inset(0 calc(100% - var(--split)) 0 0)}
 .cover-title-wrap.on-dark{color:var(--mist);clip-path:inset(0 0 0 var(--split))}
-.cover-kicker{margin:0 0 2.2cqw;font-size:2.4cqw;font-weight:700;letter-spacing:.04em;color:var(--blue)}
 .cover-title{margin:0;color:inherit;font-weight:900;line-height:1.16;letter-spacing:-.025em}
 .cover-info{position:absolute;left:var(--logo-left);bottom:5.5%;width:var(--logo-width);color:var(--navy)}
 .cover-info .logo-fit{width:100%}
@@ -1232,9 +1229,7 @@ def build_html(md_text, meta_override, cover_src, font_css, toc_depth, chapter_b
         base_date = m.group(1) if m else ""
     lines_, size = cover_title_lines(meta)
     title_html = "<br>".join(esc(x) for x in lines_)
-    kicker = meta.get("cover_label", DEFAULT_LABEL)
-    title_block = ((f'<p class="cover-kicker">{esc(kicker)}</p>' if kicker else "")
-                   + f'<h1 class="cover-title" style="font-size:{size:.2f}cqw">{title_html}</h1>')
+    title_block = f'<h1 class="cover-title" style="font-size:{size:.2f}cqw">{title_html}</h1>'
     cover = [
         '<section class="cover">',
         f'<img class="cover-bg" src="{cover_src}" alt="">',
@@ -1319,7 +1314,7 @@ def main():
     ap.add_argument("--theme", choices=["deck", "classic"], default="deck",
                     help="도표·표 테마 (deck: 발표자료 테마, classic: 예전 리포트 테마)")
     ap.add_argument("--no-chapter-break", action="store_true", help="인쇄할 때 ## 제목마다 새 쪽으로 넘기지 않는다")
-    for key in ("title", "subtitle", "team", "date", "version", "cover-label", "cover-title"):
+    for key in ("title", "subtitle", "team", "date", "version", "cover-title"):
         ap.add_argument(f"--{key}", help=f"표지 {key} (front matter보다 우선)")
     args = ap.parse_args()
     global THEME
@@ -1337,7 +1332,7 @@ def main():
     cover_src, font_css = extract_cover(args.cover)
 
     override = {"title": args.title, "subtitle": args.subtitle, "team": args.team,
-                "date": args.date, "version": args.version, "cover_label": args.cover_label, "cover_title": args.cover_title}
+                "date": args.date, "version": args.version, "cover_title": args.cover_title}
     try:
         page = build_html(args.markdown.read_text(encoding="utf-8"), override, cover_src, font_css,
                           args.toc_depth or 1, not args.no_chapter_break,
