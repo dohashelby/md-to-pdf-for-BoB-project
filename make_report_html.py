@@ -192,10 +192,12 @@ def inline(s, ctx):
     # 이미지 구문은 링크 처리보다 먼저 보관한다. 코드 안의 예시는 변환하지 않는다.
     s = IMAGE_RE.sub(lambda m: keep(image_html(m, ctx)), s)
 
+    # 링크는 「」로 감싸 표시한다. 이미 「[글자](주소)」처럼 감싼 경우에는 한 번만 붙인다.
     def link(m):
-        return keep(f'<a href="{html.escape(m.group(2), quote=True)}">') + m.group(1) + keep("</a>")
+        href = html.escape(m.group(2), quote=True)
+        return keep("「" + f'<a class="link" href="{href}">') + m.group(1) + keep("</a>」")
 
-    s = re.sub(r"\[([^\[\]]+)\]\(([^)\s]+)\)", link, s)
+    s = re.sub(r"「?\[([^\[\]]+)\]\(([^)\s]+)\)」?", link, s)
     s = html.escape(s, quote=False)
     s = re.sub(r"&lt;br\s*/?&gt;", "<br>", s)
 
@@ -205,9 +207,11 @@ def inline(s, ctx):
         while url and url[-1] in ".,;:)":
             tail = url[-1] + tail
             url = url[:-1]
-        return keep(f'<a href="{url}">{url}</a>') + tail
+        if not url:
+            return m.group(0)
+        return keep(f'「<a class="link" href="{url}">{url}</a>」') + tail
 
-    s = re.sub(r"(https?://[^\s<\x00]+)", autolink, s)
+    s = re.sub(r"「?(https?://[^\s<\x00」]+)」?", autolink, s)
 
     def cite(m):
         rid = m.group(1)
@@ -1007,12 +1011,9 @@ body{margin:0;background:var(--gray);color:var(--text);
 .cover-meta{margin:0;font-size:2.15cqw;line-height:1.4;font-weight:700;color:var(--navy)}
 .logo-fit{white-space:nowrap}
 
-/* ---------- body sheet (레퍼런스: 들여 쓴 좁은 본문 단, 쪽 폭을 쓰는 도표) ---------- */
+/* ---------- body sheet (본문·도표 모두 좌우 여백이 같은 쪽 폭 단) ---------- */
 .sheet{width:min(210mm,100%);margin:24px auto 48px;background:#fff;padding:22mm 18mm 24mm;
   box-shadow:0 2px 16px rgba(11,22,63,.10);font-size:9.6pt;line-height:1.8}
-.doc > *, .toc{margin-left:var(--indent)}
-.doc > .exhibit, .doc > pre, .doc > .mermaid{margin-left:0}
-@media screen and (max-width:760px){.doc > *, .toc{margin-left:0}}
 
 .toc-title{font-size:30pt;font-weight:800;color:var(--navy);margin:0 0 16mm;letter-spacing:-.02em;line-height:1.2}
 .toc ol{list-style:none;padding:0;margin:0}
@@ -1034,6 +1035,7 @@ h3{font-size:13pt;line-height:1.4;margin:10mm 0 3.5mm}
 h4{font-size:10.5pt;line-height:1.4;margin:7mm 0 2mm}
 p{margin:0 0 3.4mm}
 a{color:var(--navy);text-decoration-color:var(--blue);text-underline-offset:2px}
+a.link{text-decoration:underline;overflow-wrap:anywhere}
 a.cite{text-decoration:none;color:var(--blue);font-weight:700;font-size:.92em}
 strong{color:var(--navy);font-weight:700}
 hr{border:none;border-top:1px solid var(--gray);margin:9mm 0}
@@ -1103,7 +1105,6 @@ td strong{font-weight:800}
   tr,blockquote,pre,.mermaid,li.ref,.chart-fig,.image-fig,aside.note{break-inside:avoid}
   thead{display:table-header-group}
   .table-wrap{overflow:visible}
-  a{color:inherit;text-decoration:none}
   a.cite{color:var(--blue)}
 }
 """
@@ -1138,14 +1139,13 @@ blockquote{background:var(--soft);border-left:4px solid var(--navy)}
 blockquote strong,.note-body strong{background:linear-gradient(transparent 55%,var(--yellow) 55%)}
 /* 여백 주석(> **라벨**): 둥근 테두리 상자 + 네이비 알약 라벨 */
 .doc > aside.note{display:block;position:relative;border:none;border-top:1.4px solid var(--navy);
-  padding:6mm 0 1mm;margin:10mm 0 8mm var(--indent)}
+  padding:6mm 0 1mm;margin:10mm 0 8mm}
 .note-label{position:absolute;top:0;left:0;transform:translateY(-50%);padding:.8mm 4.5mm;
   background:var(--navy);color:#fff;font-size:8.4pt}
 .note-label:empty{display:none}
 .note-label:not(:empty)::before{content:none}
 .note-body{border:none;padding:0}
 .note-body ul > li::before{content:"•";color:var(--accent)}
-@media screen and (max-width:760px){.doc > aside.note{margin-left:0}}
 .mermaid{background:#fff;border:none}
 @media print{.exhibit.deck:not(:has(table)){break-inside:avoid}.ex-tab{break-inside:avoid}}
 """
@@ -1172,12 +1172,14 @@ def em_width(text):
 
 
 def cover_title_lines(meta):
-    """표지 큰 제목의 줄과 글자 크기(cqw)를 정한다. cover_title에 '|'로 줄을 직접 나눌 수 있다."""
-    if meta.get("cover_title"):
-        lines = [x.strip() for x in meta["cover_title"].split("|") if x.strip()]
+    """표지 큰 제목의 줄과 글자 크기(cqw)를 정한다. cover_title에 '|'로 줄을 직접 나눌 수 있다.
+    '|'가 없으면 cover_title(없으면 title)을 길이에 맞춰 자동으로 나눈다."""
+    text = meta.get("cover_title") or meta.get("title") or "보고서"
+    if "|" in text:
+        lines = [x.strip() for x in text.split("|") if x.strip()]
     else:
         lines, cur = [], ""
-        for word in meta.get("title", "보고서").split():
+        for word in text.split():
             cand = f"{cur} {word}".strip()
             if cur and em_width(cand) > 9.0:
                 lines.append(cur)

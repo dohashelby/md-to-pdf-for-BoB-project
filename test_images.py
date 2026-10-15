@@ -76,7 +76,7 @@ class ImageTests(unittest.TestCase):
     def test_inline_images_and_links(self):
         result = self.render('본문 ![그림](images/diagram.png) [링크](https://example.org) 끝')
         self.assertIn('<p>본문 <img ', result)
-        self.assertIn('<a href="https://example.org">링크</a>', result)
+        self.assertIn('「<a class="link" href="https://example.org">링크</a>」', result)
         self.assertNotIn('<figure', result)
 
     def test_code_examples_are_not_loaded(self):
