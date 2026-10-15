@@ -30,7 +30,8 @@
 
 지원하는 Markdown
   제목(#~######), 문단, **굵게**, *기울임*, `코드`, [링크](url), 자동 링크, 목록(중첩·번호),
-  표(정렬 포함), 인용(> 안의 목록·표 포함), 코드 블록, ```mermaid 도식, 가로줄.
+  표(정렬 포함), 로컬 이미지(![설명](경로), 결과 파일에 포함), 인용(> 안의 목록·표 포함),
+  코드 블록, ```mermaid 도식, 가로줄.
   참고문헌 목록의 "- [R01] …"·"- [T1] …" 항목에는 앵커를 달고, 본문의 [R01]·[R08~R11]·[T12]를 그 항목에 연결한다.
 
 도표 (레퍼런스: 맥킨지 리포트의 '도표 N' 형식)
@@ -76,6 +77,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from urllib.parse import unquote
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_COVER = SCRIPT_DIR / "표지.png"
@@ -94,6 +96,13 @@ HR_RE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
 TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
 CITE_RE = re.compile(r"\[((?:R|T)\d{1,2})((?:~(?:R|T)?\d{1,2})?)\]")
 REF_ITEM_RE = re.compile(r"^\s*[-*+]\s+\[((?:R|T)\d{1,2})\]")
+IMAGE_RE = re.compile(
+    r'!\[((?:\\.|[^\]\\])*)\]\(\s*'
+    r'(?:<([^>\n]+)>|((?:\\.|[^()\s]|\([^()\n]*\))+))'
+    r'(?:\s+(["\'])(.*?)\4)?\s*\)'
+)
+IMAGE_MIMES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+               ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml"}
 
 
 # ---------------------------------------------------------------- front matter
@@ -115,7 +124,7 @@ def split_front_matter(text):
 # ---------------------------------------------------------------- inline
 
 class Context:
-    def __init__(self, ref_ids, toc_depth):
+    def __init__(self, ref_ids, toc_depth, image_base_dir=None):
         self.ref_ids = ref_ids
         self.toc_depth = toc_depth
         self.toc = []
@@ -123,6 +132,8 @@ class Context:
         self.exhibit = 0
         self.pending_caption = ""
         self.mermaid = False
+        self.image_base_dir = Path(image_base_dir) if image_base_dir is not None else Path.cwd()
+        self.image_cache = {}
 
     def heading(self, level, raw):
         self.count += 1
@@ -145,6 +156,32 @@ class Context:
         return f'<h{level} id="{hid}">{text}</h{level}>'
 
 
+def image_html(match, ctx):
+    """MD 위치를 기준으로 로컬 이미지를 읽어 결과 HTML에 포함한다."""
+    alt, angled, plain, _, title = match.groups()
+    src = re.sub(r"\\([\\()\[\] ])", r"\1", angled or plain)
+    src = unquote(src)
+    image_path = Path(src)
+    if not image_path.is_absolute():
+        if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", src) or src.startswith("//"):
+            raise ValueError(f"이미지는 로컬 파일을 지정하세요: {src}")
+        image_path = ctx.image_base_dir / image_path
+    mime = IMAGE_MIMES.get(image_path.suffix.lower())
+    if mime is None:
+        raise ValueError(f"지원하지 않는 이미지 형식입니다: {image_path}")
+    image_path = image_path.resolve()
+    if image_path not in ctx.image_cache:
+        try:
+            data = image_path.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"이미지를 읽을 수 없습니다: {image_path} ({exc.strerror})") from exc
+        ctx.image_cache[image_path] = f"data:{mime};base64,{base64.b64encode(data).decode()}"
+    alt = re.sub(r"\\([\\\[\]])", r"\1", alt)
+    title_attr = f' title="{html.escape(title, quote=True)}"' if title else ""
+    return (f'<img class="report-image" src="{ctx.image_cache[image_path]}" '
+            f'alt="{html.escape(alt, quote=True)}"{title_attr}>')
+
+
 def inline(s, ctx):
     slots = []
 
@@ -154,6 +191,8 @@ def inline(s, ctx):
 
     # 코드 구간은 다른 변환에서 보호한다
     s = re.sub(r"(`+)(.+?)\1", lambda m: keep("<code>" + html.escape(m.group(2).strip()) + "</code>"), s)
+    # 이미지 구문은 링크 처리보다 먼저 보관한다. 코드 안의 예시는 변환하지 않는다.
+    s = IMAGE_RE.sub(lambda m: keep(image_html(m, ctx)), s)
 
     def link(m):
         return keep(f'<a href="{html.escape(m.group(2), quote=True)}">') + m.group(1) + keep("</a>")
@@ -204,7 +243,8 @@ def indent_of(line):
 def starts_block(line):
     stripped = line.lstrip()
     return (stripped.startswith(("#", ">", "|", "```", "~~~"))
-            or bool(LIST_RE.match(line)) or bool(HR_RE.match(line)))
+            or bool(LIST_RE.match(line)) or bool(HR_RE.match(line))
+            or bool(IMAGE_RE.fullmatch(stripped.strip())))
 
 
 def split_row(row):
@@ -771,6 +811,10 @@ def is_table_start(lines, k):
     return k + 1 < len(lines) and lines[k].lstrip().startswith("|") and bool(TABLE_SEP_RE.match(lines[k + 1]))
 
 
+def is_image_start(lines, k):
+    return k < len(lines) and bool(IMAGE_RE.fullmatch(lines[k].strip()))
+
+
 def parse_blocks(lines, ctx):
     out, i, n = [], 0, len(lines)
     while i < n:
@@ -808,6 +852,28 @@ def parse_blocks(lines, ctx):
         if HR_RE.match(line):
             out.append("<hr>")
             i += 1
+            continue
+
+        image_match = IMAGE_RE.fullmatch(line.strip())
+        if image_match:
+            image = image_html(image_match, ctx)
+            i += 1
+            notes = []
+            k = i
+            while k < n and not lines[k].strip():
+                k += 1
+            while k < n and NOTE_RE.match(lines[k].strip()) and not starts_block(lines[k]):
+                buf = []
+                while k < n and lines[k].strip() and not starts_block(lines[k]):
+                    buf.append(lines[k].strip())
+                    k += 1
+                notes.append(" ".join(buf))
+                i = k
+                while k < n and not lines[k].strip():
+                    k += 1
+            caption, ctx.pending_caption = ctx.pending_caption or image_match.group(5) or "", ""
+            out.append(exhibit(ctx, caption, image, notes).replace(
+                'class="exhibit"', 'class="exhibit image-fig"', 1))
             continue
 
         if line.lstrip().startswith("|") and i + 1 < n and TABLE_SEP_RE.match(lines[i + 1]):
@@ -862,7 +928,7 @@ def parse_blocks(lines, ctx):
         while k < n and not lines[k].strip():
             k += 1
         cap = CAPTION_RE.match(" ".join(buf))
-        if cap and len(buf) == 1 and is_table_start(lines, k):
+        if cap and len(buf) == 1 and (is_table_start(lines, k) or is_image_start(lines, k)):
             ctx.pending_caption = cap.group(1)
             continue
         out.append("<p>" + inline(" ".join(buf), ctx) + "</p>")
@@ -1009,6 +1075,9 @@ blockquote p:last-child,blockquote ul:last-child{margin-bottom:0}
 .ex-note{margin:2.6mm 0 0;font-size:7.8pt;line-height:1.6;color:var(--muted)}
 .ex-note + .ex-note{margin-top:.6mm}
 .chart{display:block;width:100%;height:auto;font-family:var(--font);overflow:visible}
+.report-image{max-width:100%;height:auto;vertical-align:middle}
+.image-fig .report-image{display:block;width:auto;max-width:100%;max-height:175mm;
+  object-fit:contain;margin:0 auto}
 
 /* 표: 칠하지 않은 얇은 가로줄, 굵은 머리글 + 진한 선, 굵은 첫 열 */
 .table-wrap{overflow-x:auto}
@@ -1034,7 +1103,7 @@ td strong{font-weight:800}
   .toc{break-after:page}
   body.chapter-break .doc h2.chapter{break-before:page;margin-top:0}
   h2,h3,h4,.ex-label,.ex-title,.ex-sub{break-after:avoid}
-  tr,blockquote,pre,.mermaid,li.ref,.chart-fig,aside.note{break-inside:avoid}
+  tr,blockquote,pre,.mermaid,li.ref,.chart-fig,.image-fig,aside.note{break-inside:avoid}
   thead{display:table-header-group}
   .table-wrap{overflow:visible}
   a{color:inherit;text-decoration:none}
@@ -1127,7 +1196,8 @@ def cover_title_lines(meta):
     return lines, min(11.0, 84.0 / widest)
 
 
-def build_html(md_text, meta_override, cover_src, font_css, toc_depth, chapter_break):
+def build_html(md_text, meta_override, cover_src, font_css, toc_depth, chapter_break,
+               image_base_dir=None):
     meta, body = split_front_matter(md_text)
     meta.update({k: v for k, v in meta_override.items() if v})
     lines = body.splitlines()
@@ -1149,7 +1219,7 @@ def build_html(md_text, meta_override, cover_src, font_css, toc_depth, chapter_b
                 break
 
     ref_ids = {m.group(1) for m in map(REF_ITEM_RE.match, lines) if m}
-    ctx = Context(ref_ids, toc_depth)
+    ctx = Context(ref_ids, toc_depth, image_base_dir)
     doc_html = parse_blocks(lines, ctx)
     if chapter_break:
         # ## 장은 새 쪽에서 시작하므로 그 앞의 가로줄(---)은 필요 없다.
@@ -1271,8 +1341,12 @@ def main():
 
     override = {"title": args.title, "subtitle": args.subtitle, "team": args.team,
                 "date": args.date, "version": args.version, "cover_label": args.cover_label, "cover_title": args.cover_title}
-    page = build_html(args.markdown.read_text(encoding="utf-8"), override, cover_src, font_css,
-                      args.toc_depth or 1, not args.no_chapter_break)
+    try:
+        page = build_html(args.markdown.read_text(encoding="utf-8"), override, cover_src, font_css,
+                          args.toc_depth or 1, not args.no_chapter_break,
+                          image_base_dir=args.markdown.resolve().parent)
+    except ValueError as exc:
+        sys.exit(str(exc))
     if not want_pdf:
         out.write_text(page, encoding="utf-8")
         print(f"HTML: {out}")
