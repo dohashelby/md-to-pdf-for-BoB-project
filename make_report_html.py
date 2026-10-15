@@ -873,7 +873,7 @@ def parse_blocks(lines, ctx):
                     k += 1
             caption, ctx.pending_caption = ctx.pending_caption or image_match.group(5) or "", ""
             out.append(exhibit(ctx, caption, image, notes).replace(
-                'class="exhibit"', 'class="exhibit image-fig"', 1))
+                'class="exhibit', 'class="exhibit image-fig', 1))
             continue
 
         if line.lstrip().startswith("|") and i + 1 < n and TABLE_SEP_RE.match(lines[i + 1]):

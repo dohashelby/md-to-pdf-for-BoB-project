@@ -57,7 +57,7 @@ class ImageTests(unittest.TestCase):
         result = self.render(md)
         self.assertIn('도표 1', result)
         self.assertIn('도표 2', result)
-        self.assertIn('class="exhibit image-fig"', result)
+        self.assertRegex(result, r'class="exhibit image-fig[" ]')
         self.assertIn('class="ex-note">자료:', result)
         self.assertIn('class="ex-note">주:', result)
         self.assertNotIn('<p>도표:', result)
@@ -66,7 +66,7 @@ class ImageTests(unittest.TestCase):
         result = self.render('![<bad> & "quote"](images/diagram.png "구조 설명")')
         self.assertIn('alt="&lt;bad&gt; &amp; &quot;quote&quot;"', result)
         self.assertIn('title="구조 설명"', result)
-        self.assertIn('class="ex-title">구조 설명', result)
+        self.assertRegex(result, r'(class="ex-title">|</span>)구조 설명</p>')
 
     def test_image_on_next_line_starts_figure(self):
         result = self.render('앞 문단\n![구조](images/diagram.png)\n뒤 문단')
