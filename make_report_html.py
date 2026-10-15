@@ -6,6 +6,7 @@
   python3 make_report_html.py 보고서.md -o out/report.html
   python3 make_report_html.py 보고서.md --pdf                → 보고서.pdf 한 파일만 생성(Chrome 사용)
   python3 make_report_html.py 보고서.md -o out/report.pdf    → 출력 경로가 .pdf여도 PDF만 생성
+  python3 make_report_html.py 보고서.md --theme classic      → 도표·표를 예전 리포트 테마로(기본은 발표자료 deck 테마)
   자료 폴더(_assets)는 만들지 않는다. PDF를 만들 때 쓰는 중간 HTML은 임시 폴더에서 만들고 지운다.
 
 표지
@@ -315,6 +316,18 @@ CAPTION_RE = re.compile(r"^(?:도표|Table)\s*[:：]\s*(.+)$")
 NOTE_RE = re.compile(r"^\**(출처|자료|주|Note|참고)(\s*[:：)]|는\s)")
 CHART_KEYS = ("type", "title", "subtitle", "unit", "source", "note")
 CHART_COLORS = ["#0B163F", "#6688CC", "#FFD45C", "#9AA6C4"]
+# deck: 발표자료(PPT) 테마 — 둥근 테두리 패널, 네이비 탭 라벨, 번호 원, 회색 꺾쇠 화살표. classic: 예전 리포트 테마
+THEME = "deck"
+DECK_CHART_COLORS = ["#6688CC", "#0B163F", "#FFD45C", "#9AA6C4"]
+ACCENT, LINE, CHEVRON, SOFT = "#4A6DBB", "#C9CEDD", "#C5C7D1", "#EEF1F8"
+
+
+def chart_colors():
+    return DECK_CHART_COLORS if THEME == "deck" else CHART_COLORS
+
+
+# deck 탭 라벨에서 제목에 쓸 수 있는 폭(pt): 본문 단 174mm의 96% − 좌우 여백 14mm − '도표 N' 라벨
+TAB_TITLE_PT = 430
 
 
 def exhibit(ctx, title, body, notes=(), sub=""):
@@ -322,10 +335,19 @@ def exhibit(ctx, title, body, notes=(), sub=""):
     head = ""
     if title:
         ctx.exhibit += 1
-        head = (f'<p class="ex-label">도표 {ctx.exhibit}</p>'
-                f'<p class="ex-title">{inline(title, ctx)}</p>')
+        if THEME == "deck":  # 패널 위쪽 테두리에 걸친 네이비 탭 라벨
+            # 탭은 한 줄로 둔다. 제목이 패널 폭을 넘으면 글자 크기를 줄인다(10.5pt → 최소 7.5pt)
+            plain = re.sub(r"\*\*|`|\[([^\]]*)\]\([^)]*\)", r"\1", title)
+            size = max(7.5, min(10.5, 10.5 * TAB_TITLE_PT / max(text_w(plain, 10.5) * .95, 1)))
+            style = f' style="font-size:{size:.2f}pt"' if size < 10.5 else ""
+            head = (f'<p class="ex-tab"{style}><span class="ex-num">도표 {ctx.exhibit}</span>'
+                    f'{inline(title, ctx)}</p>')
+        else:
+            head = (f'<p class="ex-label">도표 {ctx.exhibit}</p>'
+                    f'<p class="ex-title">{inline(title, ctx)}</p>')
     foot = "".join(f'<p class="ex-note">{inline(n, ctx)}</p>' for n in notes if n)
-    return f'<figure class="exhibit">{head}{sub}{body}{foot}</figure>'
+    cls = "exhibit" if THEME != "deck" else ("exhibit deck" if title else "exhibit deck untitled")
+    return f'<figure class="{cls}">{head}{sub}{body}{foot}</figure>'
 
 
 def to_num(text):
@@ -373,7 +395,7 @@ def render_chart(code, ctx):
             x -= text_w(series[j], 15)
             parts.append(svg_text(x, 18, series[j], 15, "start"))
             x -= 24
-            parts.append(f'<rect x="{x:.1f}" y="5" width="16" height="16" fill="{CHART_COLORS[j % 4]}"/>')
+            parts.append(f'<rect x="{x:.1f}" y="5" width="16" height="16" fill="{chart_colors()[j % 4]}"/>')
             x -= 22
 
     if spec.get("type", "bar") == "hbar":
@@ -386,7 +408,7 @@ def render_chart(code, ctx):
             for j in range(m_):
                 length = vals[i][j] / top_v * avail
                 by = y + j * (bar_h + gap)
-                parts.append(f'<rect x="{label_w}" y="{by:.1f}" width="{length:.1f}" height="{bar_h}" fill="{CHART_COLORS[j % 4]}"/>')
+                parts.append(f'<rect x="{label_w}" y="{by:.1f}" width="{length:.1f}" height="{bar_h}" fill="{chart_colors()[j % 4]}"/>')
                 parts.append(svg_text(label_w + length + 8, by + bar_h / 2 + 5, raw[i][j], 15, "start", 600))
             y += block + 22
         parts.append(f'<line x1="{label_w}" y1="{legend_h}" x2="{label_w}" y2="{y - 16:.1f}" stroke="#0B163F" stroke-width="1.5"/>')
@@ -401,10 +423,15 @@ def render_chart(code, ctx):
             for j in range(m_):
                 h = vals[i][j] / top_v * plot_h
                 bx = x0 + j * (bar_w + gap)
-                parts.append(f'<rect x="{bx:.1f}" y="{top + plot_h - h:.1f}" width="{bar_w:.1f}" height="{h:.1f}" fill="{CHART_COLORS[j % 4]}"/>')
+                parts.append(f'<rect x="{bx:.1f}" y="{top + plot_h - h:.1f}" width="{bar_w:.1f}" height="{h:.1f}" fill="{chart_colors()[j % 4]}"/>')
                 parts.append(svg_text(bx + bar_w / 2, top + plot_h - h - 9, raw[i][j], 16, "middle", 600))
             parts.append(svg_text(group * (i + 0.5), top + plot_h + 30, cat, 15))
-        parts.append(f'<line x1="0" y1="{top + plot_h}" x2="{W}" y2="{top + plot_h}" stroke="#0B163F" stroke-width="1.5"/>')
+        if THEME == "deck":
+            grid = "".join(f'<line x1="0" y1="{top + plot_h * k / 4:.1f}" x2="{W}" y2="{top + plot_h * k / 4:.1f}" '
+                           f'stroke="#E6E8EF" stroke-dasharray="4 4"/>' for k in range(4))
+            parts.insert(0, grid)
+        parts.append(f'<line x1="0" y1="{top + plot_h}" x2="{W}" y2="{top + plot_h}" '
+                     f'stroke="{"#9AA3BC" if THEME == "deck" else "#0B163F"}" stroke-width="1.5"/>')
         H = top + plot_h + 46
 
     svg = (f'<svg class="chart" viewBox="0 0 {W} {H:.0f}" role="img" '
@@ -414,7 +441,7 @@ def render_chart(code, ctx):
         sub = (f'<p class="ex-sub"><strong>{html.escape(spec.get("subtitle", ""))}</strong>'
                f'{html.escape(spec.get("unit", ""))}</p>')
     notes = [f'자료: {spec["source"]}' if spec.get("source") else "", spec.get("note", "")]
-    return exhibit(ctx, spec.get("title", ""), svg, notes, sub).replace('class="exhibit"', 'class="exhibit chart-fig"', 1)
+    return exhibit(ctx, spec.get("title", ""), svg, notes, sub).replace('class="exhibit', 'class="exhibit chart-fig', 1)
 
 
 def parse_spec(code, keys):
@@ -443,7 +470,7 @@ def figure(ctx, spec, svg_body, w, h, label):
            f'{svg_body}</svg>')
     notes = [f'자료: {spec["source"]}' if spec.get("source") else "", spec.get("note", "")]
     return exhibit(ctx, spec.get("title", ""), svg, notes, sub_html(spec)).replace(
-        'class="exhibit"', 'class="exhibit chart-fig"', 1)
+        'class="exhibit', 'class="exhibit chart-fig', 1)
 
 
 def wrap(text, max_w, size):
@@ -490,6 +517,74 @@ def arrow(x1, y1, x2, y2, color="#0B163F", width=1.6, head=9, dash=""):
 NAVY, BLUE, YELLOW, MIST, GRAY, MUTED = "#0B163F", "#6688CC", "#FFD45C", "#F7F8FC", "#E5E7EB", "#5A6378"
 
 
+def chevron(x, y, size=11, color=CHEVRON):
+    """발표자료의 회색 꺾쇠(>) 화살표."""
+    return (f'<path d="M{x - size * .45:.1f},{y - size:.1f} L{x + size * .45:.1f},{y:.1f} L{x - size * .45:.1f},{y + size:.1f}" '
+            f'fill="none" stroke="{color}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>')
+
+
+def badge(cx, cy, label, r=15, fill=NAVY, color="#FFFFFF"):
+    """번호 원(❶ 모양)."""
+    return (f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r}" fill="{fill}"/>'
+            + svg_text(cx, cy + r * .4, str(label), round(r * 1.1, 1), "middle", 800, color))
+
+
+def check_badge(cx, cy, r=12):
+    return (f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r}" fill="{YELLOW}"/>'
+            f'<path d="M{cx - r * .5:.1f},{cy:.1f} l{r * .33:.1f},{r * .33:.1f} l{r * .67:.1f},{-r * .7:.1f}" '
+            f'fill="none" stroke="{NAVY}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>')
+
+
+def render_flow_deck(spec, nodes, ctx):
+    """deck 테마의 흐름도: 번호 원이 붙은 둥근 상자, 사이는 회색 꺾쇠."""
+    W, gap_x, row_gap, pad, circ = 1000, 46, 72, 20, 32
+    per = len(nodes) if len(nodes) <= 5 else math.ceil(len(nodes) / 2)
+    bw = (W - (per - 1) * gap_x) / per
+    wrapped = [(wrap(n, bw - 2 * pad - circ - 10, 17.5), wrap(d, bw - 2 * pad, 15)) for n, d, _ in nodes]
+    head_h = max(max(circ, len(a) * 23) for a, _ in wrapped)
+    has_desc = any(b for _, b in wrapped)
+    bh = 2 * pad + head_h + (14 + max(len(b) for _, b in wrapped) * 21 if has_desc else 0)
+    aside_name, _, aside_text = (x.strip() for x in spec.get("aside", "").partition("|"))
+    parts, pos = [], []
+    for i, ((name, desc, hl), (nl, dl)) in enumerate(zip(nodes, wrapped)):
+        r, c = divmod(i, per)
+        x, y = c * (bw + gap_x), r * (bh + row_gap)
+        pos.append((x, y))
+        parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw:.1f}" height="{bh:.1f}" rx="12" '
+                     f'fill="{NAVY if hl else "#FFFFFF"}" stroke="{NAVY}" stroke-width="1.6"/>')
+        parts.append(badge(x + pad + circ / 2, y + pad + head_h / 2, i + 1, circ / 2,
+                           YELLOW if hl else NAVY, NAVY if hl else "#FFFFFF"))
+        ty = y + pad + (head_h - len(nl) * 23) / 2 + 17
+        parts.append(text_lines(x + pad + circ + 10, ty, nl, 17.5, 23, weight=800, fill="#FFFFFF" if hl else NAVY))
+        if dl:
+            sy = y + pad + head_h + 7
+            parts.append(f'<line x1="{x + pad:.1f}" y1="{sy:.1f}" x2="{x + bw - pad:.1f}" y2="{sy:.1f}" '
+                         f'stroke="{"#33467A" if hl else LINE}" stroke-dasharray="3 3"/>')
+            parts.append(text_lines(x + pad, sy + 7 + 16, dl, 15, 21, fill="#C9D2EA" if hl else MUTED))
+    for i in range(len(nodes) - 1):
+        (x1, y1), (x2, y2) = pos[i], pos[i + 1]
+        if y1 == y2:
+            parts.append(chevron(x1 + bw + gap_x / 2, y1 + bh / 2))
+        else:  # 줄을 바꿀 때는 아래로 꺾어 다음 줄 첫 상자로 잇는다
+            mid = y1 + bh + row_gap / 2
+            parts.append(f'<polyline points="{x1 + bw / 2:.1f},{y1 + bh + 4:.1f} {x1 + bw / 2:.1f},{mid:.1f} '
+                         f'{x2 + bw / 2:.1f},{mid:.1f} {x2 + bw / 2:.1f},{y2 - 14:.1f}" fill="none" stroke="{CHEVRON}" '
+                         f'stroke-width="3" stroke-dasharray="6 5" stroke-linejoin="round"/>')
+            parts.append(f'<path d="M{x2 + bw / 2 - 9:.1f},{y2 - 16:.1f} L{x2 + bw / 2:.1f},{y2 - 5:.1f} '
+                         f'L{x2 + bw / 2 + 9:.1f},{y2 - 16:.1f}" fill="none" stroke="{CHEVRON}" stroke-width="4" '
+                         f'stroke-linecap="round" stroke-linejoin="round"/>')
+    H = pos[-1][1] + bh
+    names = [n for n, _, _ in nodes]
+    if aside_name in names:
+        x, y = pos[names.index(aside_name)]
+        cx = x + bw / 2
+        parts.append(arrow(cx, y + bh + 38, cx, y + bh + 6, ACCENT, 1.4, 8, "4 3"))
+        lines = wrap(aside_text, max(bw * 1.6, 260), 15.5)
+        parts.append(text_lines(cx, y + bh + 60, lines, 15.5, 22, "middle", 700, ACCENT))
+        H = max(H, y + bh + 60 + (len(lines) - 1) * 22 + 8)
+    return figure(ctx, spec, "".join(parts), W, H + 2, spec.get("title") or "흐름도")
+
+
 def render_flow(code, ctx):
     """```flow: 상자와 화살표로 그린 가로 흐름. 6개 이상이면 두 줄로 접는다."""
     spec, items = parse_spec(code, ("title", "subtitle", "unit", "source", "note", "aside"))
@@ -499,6 +594,8 @@ def render_flow(code, ctx):
         nodes.append((name.rstrip("*").strip(), desc, name.endswith("*")))
     if not nodes:
         return f"<pre><code>{html.escape(code)}</code></pre>"
+    if THEME == "deck":
+        return render_flow_deck(spec, nodes, ctx)
     W, gap_x, row_gap = 1000, 44, 64
     per = len(nodes) if len(nodes) <= 5 else math.ceil(len(nodes) / 2)
     bw = (W - (per - 1) * gap_x) / per
@@ -568,24 +665,35 @@ def render_matrix(code, ctx):
         return hl, head_lines, rows_, body_lines, h
 
     data = {k: content(k) for k in cells_keys}
+    deck = THEME == "deck"
     rh_top = max(150, data["top-left"][4], data["top-right"][4])
     rh_bot = max(150, data["bottom-left"][4], data["bottom-right"][4])
     parts = []
     # 열 머리와 가로축 화살표
     for i, label in enumerate(xs[:2]):
-        parts.append(svg_text(L + i * (cw + gap) + cw / 2, 24, label, 16, "middle", 800, NAVY))
-    parts.append(arrow(L, 40, W, 40, NAVY, 1.4, 9))
+        cx = L + i * (cw + gap) + cw / 2
+        if deck and label:  # 열 머리는 네이비 알약 라벨
+            pw = text_w(label, 15) + 36
+            parts.append(f'<rect x="{cx - pw / 2:.1f}" y="2" width="{pw:.1f}" height="30" rx="15" fill="{NAVY}"/>')
+            parts.append(svg_text(cx, 22.5, label, 15, "middle", 800, "#FFFFFF"))
+        else:
+            parts.append(svg_text(cx, 24, label, 16, "middle", 800, NAVY))
+    parts.append(arrow(L, 44 if deck else 40, W, 44 if deck else 40, CHEVRON if deck else NAVY, 2 if deck else 1.4, 9))
     # 행 머리와 세로축 화살표
     rows_y = [(top, rh_top, ys[1]), (top + rh_top + gap, rh_bot, ys[0])]
     for y, h, label in rows_y:
         lines = wrap(label, L - 44, 16)
         parts.append(text_lines(28, y + h / 2 - (len(lines) - 1) * 11 + 5, lines, 16, 22, weight=800, fill=NAVY))
-    parts.append(arrow(10, top + rh_top + gap + rh_bot, 10, top, NAVY, 1.4, 9))
+    parts.append(arrow(10, top + rh_top + gap + rh_bot, 10, top, CHEVRON if deck else NAVY, 2 if deck else 1.4, 9))
     for idx, key in enumerate(cells_keys):
         r, c = divmod(idx, 2)
         x, (y, h, _) = L + c * (cw + gap), rows_y[r]
         hl, head_lines, chip_rows, body_lines, _ = data[key]
-        parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" fill="{NAVY if hl else MIST}"/>')
+        if deck:
+            parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" rx="12" '
+                         f'fill="{NAVY if hl else "#FFFFFF"}" stroke="{NAVY if hl else LINE}" stroke-width="1.6"/>')
+        else:
+            parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" fill="{NAVY if hl else MIST}"/>')
         cy = y + pad + 18
         for t in head_lines:
             if hl and t.startswith("★ "):
@@ -600,7 +708,8 @@ def render_matrix(code, ctx):
             cx = x + pad
             for chip, w in row:
                 parts.append(f'<rect x="{cx:.1f}" y="{cy - 21:.1f}" width="{w:.1f}" height="31" rx="15.5" '
-                             f'fill="{"#1B2A5C" if hl else "#FFFFFF"}" stroke="{"#33467A" if hl else GRAY}"/>')
+                             f'fill="{"#1B2A5C" if hl else (SOFT if deck else "#FFFFFF")}" '
+                             f'stroke="{"#33467A" if hl else (SOFT if deck else GRAY)}"/>')
                 parts.append(svg_text(cx + w / 2, cy, chip, 15, "middle", 600, MIST if hl else NAVY))
                 cx += w + 8
             cy += 40
@@ -623,22 +732,32 @@ def render_steps(code, ctx):
     if not cards:
         return f"<pre><code>{html.escape(code)}</code></pre>"
     legend_h = 36 if any(c[0] for c in cards) else 0
-    parts = []
+    parts, deck = [], THEME == "deck"
     if legend_h:
         label = spec.get("legend", "우리 프레임워크가 지원하는 단계")
         lx = W - text_w(label, 15)
         parts.append(svg_text(lx, 18, label, 15, "start", 400, MUTED))
-        parts.append(f'<circle cx="{lx - 16:.1f}" cy="13" r="10" fill="{NAVY}"/>'
-                     f'<path d="M{lx - 21:.1f},13 l3.5,3.5 l6.5,-7" fill="none" stroke="{MIST}" stroke-width="2"/>')
+        if deck:
+            parts.append(check_badge(lx - 16, 13, 10))
+        else:
+            parts.append(f'<circle cx="{lx - 16:.1f}" cy="13" r="10" fill="{NAVY}"/>'
+                         f'<path d="M{lx - 21:.1f},13 l3.5,3.5 l6.5,-7" fill="none" stroke="{MIST}" stroke-width="2"/>')
     y = legend_h
     for start in range(0, len(cards), cols):
         row = cards[start:start + cols]
         h = max(2 * pad + 46 + len(t) * 25 + 8 + len(d) * 22 for _, t, d in row)
         for j, (checked, t, d) in enumerate(row):
             x = j * (cw + gap)
-            parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" fill="{MIST}"/>')
-            parts.append(svg_text(x + pad, y + pad + 32, str(start + j + 1), 36, "start", 800, BLUE))
-            if checked:
+            if deck:  # 둥근 카드 + 네이비 번호 원
+                parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" rx="12" '
+                             f'fill="#FFFFFF" stroke="{NAVY if checked else LINE}" stroke-width="1.6"/>')
+                parts.append(badge(x + pad + 17, y + pad + 17, start + j + 1, 17))
+                if checked:
+                    parts.append(check_badge(x + cw - 26, y + 26))
+            else:
+                parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{cw:.1f}" height="{h:.1f}" fill="{MIST}"/>')
+                parts.append(svg_text(x + pad, y + pad + 32, str(start + j + 1), 36, "start", 800, BLUE))
+            if checked and not deck:
                 cx, cy = x + cw - 26, y + 26
                 parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="12" fill="{NAVY}"/>'
                              f'<path d="M{cx - 6:.1f},{cy:.1f} l4,4 l8,-8.5" fill="none" stroke="{MIST}" stroke-width="2.2"/>')
@@ -923,6 +1042,51 @@ td strong{font-weight:800}
 }
 """
 
+# deck 테마(발표자료): CSS 뒤에 붙여 도표·표·주석 상자만 덮어쓴다
+DECK_CSS = r"""
+:root{--accent:#4A6DBB;--line:#C9CEDD;--soft:#EEF1F8}
+/* 도표 패널: 둥근 네이비 테두리 + 위쪽 테두리에 걸친 탭 라벨 */
+.exhibit.deck{position:relative;background:#fff;border:1.6px solid var(--navy);border-radius:14px;
+  padding:0 6mm 5mm;margin:13mm 0 9mm}
+.exhibit.deck.untitled{border:none;background:none;padding:0;margin:7mm 0 8mm}
+/* 탭은 흐름 안에 두고 위로 반만 올린다: 인쇄할 때 탭만 쪽 끝에 남지 않게 다음 내용과 붙인다 */
+.ex-tab{display:table;transform:translateY(-50%);margin:0 auto 1mm;max-width:96%;white-space:nowrap;break-after:avoid;
+  background:var(--navy);color:#fff;font-size:10.5pt;font-weight:800;line-height:1.4;letter-spacing:-.01em;
+  text-align:center;padding:1.7mm 7mm;clip-path:polygon(4mm 0,calc(100% - 4mm) 0,100% 50%,calc(100% - 4mm) 100%,4mm 100%,0 50%)}
+.ex-tab a,.ex-tab strong{color:#fff}
+@media screen and (max-width:760px){.ex-tab{white-space:normal}}
+.ex-num{color:var(--yellow);font-size:min(8.5pt,.82em);font-weight:800;margin-right:2.5mm;letter-spacing:.02em}
+.exhibit.deck .ex-sub{text-align:center;color:var(--muted);margin-bottom:5mm}
+.exhibit.deck .ex-sub strong{display:inline;color:var(--navy);margin-right:2mm}
+.exhibit.deck .ex-note{border-top:1px dashed var(--line);padding-top:2mm;margin-top:4mm}
+.exhibit.deck .ex-note + .ex-note{border-top:none;padding-top:0}
+/* 표: 네이비 머리글, 연한 첫 열, 가는 가로줄 */
+.exhibit.deck table{border-collapse:separate;border-spacing:0;font-size:8.6pt;line-height:1.55}
+.exhibit.deck th{background:var(--navy);color:#fff;text-align:center;vertical-align:middle;
+  padding:2.2mm 3mm;border:none;font-weight:800}
+.exhibit.deck th:first-child{border-top-left-radius:7px}
+.exhibit.deck th:last-child{border-top-right-radius:7px}
+.exhibit.deck td{padding:2.3mm 3mm;border-bottom:1px solid #E3E6EE}
+.exhibit.deck td:first-child{background:var(--soft);color:var(--navy);font-weight:800;text-align:center;vertical-align:middle}
+.exhibit.deck tr:last-child td{border-bottom:none}
+.exhibit.deck tr:last-child td:first-child{border-bottom-left-radius:7px}
+/* 인용: 연한 상자 + 네이비 왼쪽 띠, 굵은 글씨는 노란 형광펜 */
+blockquote{background:var(--soft);border-left:4px solid var(--navy);border-radius:0 10px 10px 0}
+blockquote strong,.note-body strong{background:linear-gradient(transparent 55%,var(--yellow) 55%)}
+/* 여백 주석(> **라벨**): 둥근 테두리 상자 + 네이비 알약 라벨 */
+.doc > aside.note{display:block;position:relative;border:1.4px solid var(--navy);border-radius:12px;
+  padding:6mm 6mm 3.5mm;margin:10mm 0 8mm var(--indent)}
+.note-label{position:absolute;top:0;left:6mm;transform:translateY(-50%);padding:.8mm 4.5mm;
+  background:var(--navy);color:#fff;border-radius:99px;font-size:8.4pt}
+.note-label:empty{display:none}
+.note-label:not(:empty)::before{content:none}
+.note-body{border:none;padding:0}
+.note-body ul > li::before{content:"•";color:var(--accent)}
+@media screen and (max-width:760px){.doc > aside.note{margin-left:0}}
+.mermaid{background:#fff;border:1.6px solid var(--navy);border-radius:14px}
+@media print{.exhibit.deck:not(:has(table)){break-inside:avoid}.ex-tab{break-inside:avoid}}
+"""
+
 MERMAID_JS = """<script type="module">
 import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
 mermaid.initialize({startOnLoad:true,theme:'base',themeVariables:{
@@ -1036,6 +1200,7 @@ def build_html(md_text, meta_override, cover_src, font_css, toc_depth, chapter_b
 <style>
 {font_css}
 {CSS.replace("__RUNNING_TITLE__", running)}
+{DECK_CSS if THEME == "deck" else ""}
 </style>
 </head>
 <body class="{'chapter-break' if chapter_break else ''}">
@@ -1046,7 +1211,7 @@ def build_html(md_text, meta_override, cover_src, font_css, toc_depth, chapter_b
 {doc_html}
 </article>
 </main>
-{MERMAID_JS if ctx.mermaid else ''}
+{(MERMAID_JS.replace("primaryColor:'#F7F8FC'", "primaryColor:'#FFFFFF'").replace("primaryBorderColor:'#6688CC'", "primaryBorderColor:'#0B163F'").replace("lineColor:'#0B163F'", "lineColor:'#9AA3BC'") if THEME == "deck" else MERMAID_JS) if ctx.mermaid else ''}
 </body>
 </html>
 """
@@ -1084,10 +1249,14 @@ def main():
     ap.add_argument("--single-file", action="store_true", help=argparse.SUPPRESS)  # 예전 옵션: 이제 항상 한 파일
     ap.add_argument("--pdf", action="store_true", help="HTML 대신 PDF 한 파일만 만든다(Chrome 사용)")
     ap.add_argument("--toc-depth", type=int, default=2, choices=[0, 2, 3], help="목차 깊이 (2: 장만, 3: 절까지, 0: 목차 없음)")
+    ap.add_argument("--theme", choices=["deck", "classic"], default="deck",
+                    help="도표·표 테마 (deck: 발표자료 테마, classic: 예전 리포트 테마)")
     ap.add_argument("--no-chapter-break", action="store_true", help="인쇄할 때 ## 제목마다 새 쪽으로 넘기지 않는다")
     for key in ("title", "subtitle", "team", "date", "version", "cover-label", "cover-title"):
         ap.add_argument(f"--{key}", help=f"표지 {key} (front matter보다 우선)")
     args = ap.parse_args()
+    global THEME
+    THEME = args.theme
 
     if not args.markdown.exists():
         sys.exit(f"Markdown 파일이 없습니다: {args.markdown}")

@@ -27,6 +27,7 @@ python3 make_report_html.py 1.md -o 출력/보고서.pdf
 | `--cover 파일` | 표지 배경 이미지(.png·.jpg) 또는 .docx | 스크립트 옆 `표지.png` |
 | `--toc-depth 2·3·0` | 목차 깊이. 2는 장만, 3은 절까지, 0은 목차 없음 | 2 |
 | `--no-chapter-break` | 인쇄할 때 `##` 장마다 새 쪽으로 넘기지 않는다 | 장마다 새 쪽 |
+| `--theme deck·classic` | 도표·표·주석 상자 테마. deck은 1차 발표자료(PPT) 테마(둥근 네이비 패널, 탭 라벨, 번호 원, 꺾쇠 화살표), classic은 예전 리포트 테마 | deck |
 | `--title`, `--team`, `--date`, `--cover-title`, `--cover-label` | 표지 문구. front matter보다 우선한다 | — |
 
 출력 결과:
